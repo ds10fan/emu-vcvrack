@@ -8,4 +8,5 @@ void init(Plugin* p) {
     p->addModel(modelDS10Drive);
     p->addModel(modelGChip);
     p->addModel(modelMintySeq);
+    p->addModel(modelMidiVerb);
 }

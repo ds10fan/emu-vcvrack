@@ -1,7 +1,7 @@
 # emu-vcvrack: E-mu chips as VCV Rack modules
 
-A VCV Rack 2 plugin with four modules: the H-chip filter, the G-chip sample interpolator as a
-sampler, a small drive, and a 7-track CV/gate recorder. **H-Chip Filter** is the digital filter section of E-mu's
+A VCV Rack 2 plugin with five modules: the H-chip filter, the G-chip sample interpolator as a
+sampler, a small drive, a 7-track CV/gate recorder, and the Alesis MIDIverb ROM emulator. **H-Chip Filter** is the digital filter section of E-mu's
 patent US 5,170,369 (Rossum, "Dynamic digital IIR audio filter"), the filter block of the
 Emulator IV's H-chip, run cycle by cycle, and programmed with the filter recipes of the EOS
 firmware. Thirty of the E4's filter types are available: the stock lowpass, highpass, bandpass,
@@ -145,6 +145,59 @@ outside Rack's own module shortcuts (a plain Backspace still deletes the module)
 saved in the patch: the sets, the A/B choices, the selected set and track. The transport starts
 stopped.
 
+## MidiVerb
+
+A port of the JavaScript Alesis MIDIverb emulator of http://ibawizard.net/midiverb/ (the page's
+inline script, not the C version it links to), with its three ROM images compiled in:
+
+| Device | ROM file | Size | Programs |
+|---|---|---|---|
+| MIDIVerb | `roms/midiverb.rom` | 32768 bytes | 1 to 64 |
+| MIDIFex | `roms/midifex.rom` | 16384 bytes | 1 to 64 |
+| MIDIVerb 2 | `roms/midiverb2.rom` | 32768 bytes | 0 to 99 (programs 50 to 69 with LFO) |
+
+The ROMs were downloaded from that page and are turned into C arrays by
+`tools/gen_midiverb_roms.py` (`dsp/midiverb_roms.inc`). `dsp/midiverb.cpp` is a line-for-line
+translation of the page's `Machine`: each sample the ROM program's 128 instructions run over a
+16K-word DRAM (four operations: add half, load half, store and add half, store inverted and
+load half; instruction 0 writes the input, 0x60 and 0x70 read the left and right outputs), the
+MIDIVerb 2 LFO patches the program's address words every 8 samples, and the output feeds back
+by the FEEDBACK amount. JavaScript's number semantics are kept (the accumulator is a double,
+shifts and inversion go through int32, DRAM stores wrap to 16 bits).
+
+The resampling is the page's, unchanged: both inputs go through its 4th-order IIR (`Filterx2`),
+the machine runs on every second engine sample with its output held in between, and the held
+output goes through a second `Filterx2`. So the machine runs at half the engine rate (24 kHz at
+48 kHz), exactly as it runs at half the browser's audio rate on the page.
+
+| Control | Function |
+|---|---|
+| display | device, program number and name; click for the device and program menu, scroll to step |
+| < > | previous / next program, wrapping |
+| MIX | the page's dry/wet slider, default 50 % |
+| FEEDBACK | the page's feedback slider, default 0 |
+| IN L, R | 5 V is 1.0 of the page's range; R is normalled to L |
+| OUT L, R | the page's output mix |
+
+Selecting a device or a program reloads the program and clears the DRAM, as the page does. The
+page's "mute effect input" and "fill DRAM with random numbers" buttons are not carried over.
+
+Verification: `test/midiverb_test.cpp` checks the ROM sizes and program tables, runs all 228
+programs for one second of an impulse and a noise burst (finite, bounded, audible output), and
+checks that reverb tails decay without feedback; the smoke test checks that the module produces
+exactly the core's output. The bit-for-bit comparison against the original JavaScript is
+prepared but needs the reference vectors, which come from running the page's own script in
+Node:
+
+```
+curl -sL -o /tmp/midiverb.html http://ibawizard.net/midiverb/
+make -C test midiverb-vectors MIDIVERB_HTML=/tmp/midiverb.html   # writes test/expected/midiverb.txt
+make -C test midiverb                                             # then compares 13 cases bit for bit
+```
+
+`dsp/midiverb.cpp` is compiled without the SDK's `-funsafe-math-optimizations` (and without
+contracted multiply-adds), so the plugin computes the same doubles as the test.
+
 ## Build
 
 ```
@@ -164,6 +217,7 @@ make -C test check    # dsp/hchip.cpp against test/expected/vectors.txt, the rec
 make -C test ds10     # the DS10 drive formula
 make -C test gchip    # the G-chip interpolator against the spec's vectors, the voice, the WAV reader
 make -C test minty    # the sequencer core: quantised recording, ties, playback, clocks
+make -C test midiverb # the MidiVerb port: tables, all programs, and the JavaScript vectors if present
 make -C test smoke    # the Rack module headless against the SDK's libRack.so (16 channels, every type, cost)
 ```
 
@@ -182,6 +236,7 @@ src/HChipFilter.cpp          the filter module: voices, controls, display, conte
 src/DS10Drive.cpp            the drive module
 src/GChip.cpp                the sampler module: loading, voices, waveform display
 src/MintySeq.cpp             the recorder module: I/O, buttons, keys, displays, patch storage
+src/MidiVerb.cpp             the MidiVerb module: program display and menu, mix, feedback
 src/widgets.hpp              runtime panel labels shared by the modules
 res/*.svg                    the panel graphics (labels are drawn at runtime)
 dsp/hchip.hpp, hchip.cpp     the chip model
@@ -189,10 +244,13 @@ dsp/ds10_drive.hpp           the drive formula
 dsp/gchip.hpp, gchip.cpp     the G-chip interpolator and playback voice; gchip_proto.inc is Table 1
 dsp/wav.hpp, wav.cpp         RIFF/WAVE reader (PCM 8/16/24/32, float, smpl loop)
 dsp/mintyseq.hpp             the recorder core: sets, patterns, quantised recording, clocks
+dsp/midiverb.hpp, .cpp       the MidiVerb port; midiverb_roms.inc the ROMs (tools/gen_midiverb_roms.py)
+roms/                        the MIDIVerb, MIDIFex and MIDIVerb 2 ROM images
 dsp/emu_filters.hpp, .cpp    the EOS filter recipes
 test/hchip_test.cpp          DSP tests; test/expected/vectors.txt the reference vectors
 test/ds10_test.cpp           drive formula test
 test/gchip_test.cpp          interpolator, voice and WAV reader tests
 test/mintyseq_test.cpp       recorder core tests
+test/midiverb_test.cpp       MidiVerb tests; test/midiverb_ref.js writes the JavaScript reference
 test/smoke/smoke.cpp         headless module test
 ```

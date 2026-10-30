@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="50.8mm" height="128.5mm" viewBox="0 0 50.8 128.5">
+  <!-- 10 HP panel. Labels are drawn at runtime by the module widget (nanosvg renders no text). -->
+  <rect x="0" y="0" width="50.8" height="128.5" fill="#e4e4e2"/>
+  <!-- title band -->
+  <rect x="0" y="0" width="50.8" height="15.5" fill="#202024"/>
+  <rect x="4" y="15.5" width="42.8" height="0.6" fill="#ff5040"/>
+  <!-- separators -->
+  <line x1="4" y1="50" x2="46.8" y2="50" stroke="#9a9a98" stroke-width="0.3"/>
+  <line x1="4" y1="83" x2="46.8" y2="83" stroke="#9a9a98" stroke-width="0.3"/>
+  <!-- output column -->
+  <rect x="28.3" y="84.5" width="19" height="33" rx="2" fill="#202024"/>
+</svg>

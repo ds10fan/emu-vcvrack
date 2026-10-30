@@ -9,6 +9,7 @@
 
 #include "../../src/GChip.cpp"
 #include "../../src/MintySeq.cpp"
+#include "../../src/MidiVerb.cpp"
 #include "../../src/HChipFilter.cpp"
 
 Plugin* pluginInstance = nullptr;
@@ -271,8 +272,67 @@ static int smokeMintySeq() {
     return fails;
 }
 
+static int smokeMidiVerb() {
+    int fails = 0;
+    MidiVerb m;
+    Module::ProcessArgs args;
+    args.sampleRate = 48000.f;
+    args.sampleTime = 1.f / 48000.f;
+    m.inputs[MidiVerb::LEFT_INPUT].channels = 1;
+    m.outputs[MidiVerb::LEFT_OUTPUT].channels = 1;
+    m.outputs[MidiVerb::RIGHT_OUTPUT].channels = 1;
+    m.process(args);  // Rack's BooleanTrigger starts high
+    // The module against the core fed the same values: identical (right normalled to left).
+    midiverb::Emulator ref;
+    ref.selectRom(2);
+    ref.selectProgram(1);
+    double l0, r0;
+    ref.process(0.0, 0.0, l0, r0);  // the module's first process() above
+    int diff = 0;
+    for (int i = 0; i < 20000; i++) {
+        float x = i < 2400 ? 3.f * std::sin(2 * M_PI * 440.0 * i / 48000.0) : 0.f;
+        m.inputs[MidiVerb::LEFT_INPUT].setVoltage(x);
+        m.process(args);
+        double ol, orr;
+        ref.process(double(x / 5.f), double(x / 5.f), ol, orr);
+        if (m.outputs[MidiVerb::LEFT_OUTPUT].getVoltage() != float(ol) * 5.f || m.outputs[MidiVerb::RIGHT_OUTPUT].getVoltage() != float(orr) * 5.f)
+            diff++;
+    }
+    std::printf("midiverb: module vs core, samples differing: %d\n", diff);
+    if (diff) fails++;
+    // NEXT steps the program; the device switch resets to the ROM's first program in the menu,
+    // here set directly
+    m.params[MidiVerb::NEXT_PARAM].setValue(1.f);
+    m.process(args);
+    m.params[MidiVerb::NEXT_PARAM].setValue(0.f);
+    m.process(args);
+    bool next = m.emu.program() == 2 && m.programNumber() == 2;
+    m.params[MidiVerb::ROM_PARAM].setValue(0);
+    m.params[MidiVerb::PROGRAM_PARAM].setValue(63);
+    m.process(args);
+    bool rom = m.emu.romIndex() == 0 && m.emu.program() == 64;  // MIDIVerb numbers from 1: DEFEAT
+    m.params[MidiVerb::PREV_PARAM].setValue(1.f);
+    m.process(args);
+    m.params[MidiVerb::PREV_PARAM].setValue(0.f);
+    m.process(args);
+    bool prev = m.emu.program() == 63;
+    std::printf("midiverb: next -> %d, MIDIVerb 64 %d, prev -> %d\n", m.emu.program() == 63 ? 2 : -1, rom, m.emu.program());
+    if (!next || !rom || !prev) fails++;
+    // cost
+    m.params[MidiVerb::ROM_PARAM].setValue(2);
+    m.params[MidiVerb::PROGRAM_PARAM].setValue(60);
+    auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 48000; i++) {
+        m.inputs[MidiVerb::LEFT_INPUT].setVoltage(std::sin(i * 0.01f));
+        m.process(args);
+    }
+    double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("midiverb: 1 s of audio at 48 kHz: %.1f ms (%.2f%% of real time)\n", us / 1000, us / 1e4);
+    return fails;
+}
+
 int main() {
-    int fails = smokeGChip() + smokeMintySeq();
+    int fails = smokeGChip() + smokeMintySeq() + smokeMidiVerb();
     HChipFilter m;
     // 2 Pole Low-pass, Q 0, fully open: flat (the gain word 0xFE, -0.14 dB)
     m.params[HChipFilter::TYPE_PARAM].setValue(0);

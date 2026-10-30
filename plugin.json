@@ -51,6 +51,17 @@
         "Recording",
         "Clock generator"
       ]
+    },
+    {
+      "slug": "MidiVerb",
+      "name": "MidiVerb",
+      "description": "Alesis MIDIverb, MIDIFex and MIDIVerb 2 ROM emulation, a port of the JavaScript emulator of ibawizard.net/midiverb",
+      "tags": [
+        "Reverb",
+        "Delay",
+        "Effect",
+        "Hardware clone"
+      ]
     }
   ]
 }
