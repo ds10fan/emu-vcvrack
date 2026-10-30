@@ -113,10 +113,12 @@ published), the volume and mix stages, the four-bank memory timing.
 
 A 7-track CV/gate step recorder (`dsp/mintyseq.hpp`, `src/MintySeq.cpp`). Each track is 4 bars
 of sixteenths (64 steps) in two patterns, A and B; ten sets hold seven tracks each. One track is
-selected; what arrives at the CV and GATE inputs is recorded onto its current pattern, quantised
-to the nearest sixteenth (a key pressed in the second half of a step lands on the next one), with
-the key's length as ties (at least one step; a key held longer than the loop fills it). A note
-written over earlier notes replaces what it covers and cuts the tail of a note it interrupts.
+selected; what arrives at the CV and GATE inputs is recorded onto its current pattern. The start
+is quantised to the nearest sixteenth (a key pressed in the second half of a step lands on the
+next one); the length, measured from that start, is quantised to quarters of a sixteenth: 25, 50,
+75 or 100 % of a step, or whole steps (ties) plus such a fraction, at least a quarter and at most
+the whole loop. A note written over earlier notes replaces what it covers and cuts the tail of a
+note it interrupts.
 The selected track also plays the live input through while a key is held, so you hear what you
 record.
 

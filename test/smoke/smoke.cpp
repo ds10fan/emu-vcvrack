@@ -157,7 +157,8 @@ static int smokeMintySeq() {
     // REC arms and starts
     press(MintySeq::REC_PARAM);
     if (!(m.seq.running && m.seq.recording)) fails++;
-    // a 2 V note from step 4 held 1.6 steps (nearest: two steps); while held the selected track monitors it
+    // a 2 V note from step 4 held 1.6 steps (6 quarters: a step and a half); while held the selected
+    // track monitors it
     advanceTo(4);
     m.inputs[MintySeq::GATE_INPUT].setVoltage(10.f);
     m.inputs[MintySeq::CV_INPUT].setVoltage(2.f);
@@ -167,8 +168,9 @@ static int smokeMintySeq() {
     m.inputs[MintySeq::GATE_INPUT].setVoltage(0.f);
     m.process(args);
     const minty::Pattern& p = m.seq.currentPattern();
-    bool recorded = p.steps[4].gate && p.steps[4].cv == 2.f && p.steps[5].tie && !p.steps[6].tie && !p.steps[6].gate;
-    std::printf("minty: monitor %d, recorded note at step 4 len 2: %d\n", monitor, recorded);
+    bool recorded = p.steps[4].gate && p.steps[4].cv == 2.f && p.steps[4].len == 4 && p.steps[5].tie && p.steps[5].len == 2 &&
+                    !p.steps[6].tie && !p.steps[6].gate;
+    std::printf("minty: monitor %d, recorded note at step 4, 1.5 steps: %d (len %d, %d)\n", monitor, recorded, p.steps[4].len, p.steps[5].len);
     if (!monitor || !recorded) fails++;
     // stop, start, play back: step 4 sounds 2 V, step 6 is silent, track 2 silent
     press(MintySeq::PLAY_PARAM);
@@ -178,10 +180,15 @@ static int smokeMintySeq() {
     for (int i = 0; i < 100; i++) m.process(args);  // past the retrigger gap
     bool play4 = m.outputs[MintySeq::CV_OUTPUT].getVoltage() == 2.f && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 10.f &&
                  m.outputs[MintySeq::GATE_OUTPUT + 1].getVoltage() == 0.f;
+    advanceTo(5);
+    for (int i = 0; i < int(0.4 * 5669); i++) m.process(args);
+    bool play5a = m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 10.f;
+    for (int i = 0; i < int(0.2 * 5669); i++) m.process(args);
+    bool play5b = m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f;
     advanceTo(6);
     bool play6 = m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f;
-    std::printf("minty: playback step 4 %d, step 6 silent %d\n", play4, play6);
-    if (!play4 || !play6) fails++;
+    std::printf("minty: playback step 4 %d, step 5 on at 40%% %d off at 60%% %d, step 6 silent %d\n", play4, play5a, play5b, play6);
+    if (!play4 || !play5a || !play5b || !play6) fails++;
     // click: a burst right after a beat (step 8), silence just before the next beat (step 12),
     // the bar click (step 0) louder than a beat click
     auto clickPeak = [&](int samples) {
@@ -252,13 +259,13 @@ static int smokeMintySeq() {
     if (!(before == 0 && afterFirst == 0 && afterSecond == 1)) fails++;
     // patch round trip keeps the notes
     m.inputs[MintySeq::CLOCK_INPUT].channels = 0;
-    m.seq.currentPattern().writeNote(10, 3, 1.5f);
+    m.seq.currentPattern().writeNote(10, 11, 1.5f);  // two steps and three quarters
     json_t* j = m.dataToJson();
     MintySeq m2;
     m2.dataFromJson(j);
     json_decref(j);
     const minty::Pattern& p2 = m2.seq.currentPattern();
-    bool roundTrip = p2.steps[10].gate && p2.steps[10].cv == 1.5f && p2.steps[12].tie && !p2.steps[13].tie;
+    bool roundTrip = p2.steps[10].gate && p2.steps[10].cv == 1.5f && p2.steps[12].tie && p2.steps[12].len == 3 && !p2.steps[13].tie;
     std::printf("minty: json round trip %d\n", roundTrip);
     if (!roundTrip) fails++;
     return fails;

@@ -222,6 +222,7 @@ struct MintySeq : Module {
                         json_array_append_new(stepJ, json_real(st.cv));
                         json_array_append_new(stepJ, json_integer(st.gate ? 1 : 0));
                         json_array_append_new(stepJ, json_integer(st.tie ? 1 : 0));
+                        json_array_append_new(stepJ, json_integer(st.len));
                         json_array_append_new(stepsJ, stepJ);
                     }
                     json_array_append_new(patternsJ, stepsJ);
@@ -265,6 +266,9 @@ struct MintySeq : Module {
                         st.cv = (float)json_number_value(json_array_get(stepJ, 1));
                         st.gate = json_integer_value(json_array_get(stepJ, 2)) != 0;
                         st.tie = json_integer_value(json_array_get(stepJ, 3)) != 0;
+                        st.len = 4;
+                        if (json_array_size(stepJ) >= 5)
+                            st.len = (uint8_t)clamp((int)json_integer_value(json_array_get(stepJ, 4)), 1, minty::kQuarters);
                     }
                 }
             }
@@ -348,8 +352,10 @@ struct TrackLane : widget::OpaqueWidget {
                 for (int i = 0; i < minty::kSteps; i++) {
                     const minty::Step& s = p.steps[i];
                     if (!s.gate && !s.tie) continue;
+                    // a note's last step is drawn as wide as its gate lasts
+                    const float w = (cellW - 1.f) * s.len / minty::kQuarters;
                     nvgBeginPath(args.vg);
-                    nvgRect(args.vg, i * cellW + 0.5f, 2.f, cellW - 1.f, box.size.y - 4.f);
+                    nvgRect(args.vg, i * cellW + 0.5f, 2.f, w, box.size.y - 4.f);
                     nvgFillColor(args.vg, s.gate ? nvgRGB(0x60, 0xe0, 0xb0) : nvgRGB(0x30, 0x80, 0x68));
                     nvgFill(args.vg);
                 }

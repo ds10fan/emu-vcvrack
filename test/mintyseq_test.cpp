@@ -44,7 +44,8 @@ static void checkRecording() {
     CHECK(q.running && q.recording, "record starts the transport");
     runInternal(q, 1);  // step 0 fires immediately
     CHECK(q.pos() == 0, "first step is 0, got %d", q.pos());
-    // A note 10 % into step 2, held for 2.3 steps: lands on step 2 with length 2.
+    // A note 10 % into step 2, held for 2.3 steps: starts on step 2, length 2.4 steps -> 10
+    // quarters: two full steps and a half.
     advanceSteps(q, 2);
     runInternal(q, kStepSamples / 10);
     CHECK(q.pos() == 2, "at step 2, got %d (phase %.2f)", q.pos(), q.phase());
@@ -53,8 +54,9 @@ static void checkRecording() {
     q.noteOff();
     const minty::Pattern& p = q.currentPattern();
     CHECK(p.steps[2].gate && !p.steps[2].tie && p.steps[2].cv == 1.25f, "note at step 2");
-    CHECK(!p.steps[3].gate && p.steps[3].tie, "tie at step 3");
-    CHECK(!p.steps[4].gate && !p.steps[4].tie, "step 4 free");
+    CHECK(!p.steps[3].gate && p.steps[3].tie && p.steps[3].len == 4, "tie at step 3");
+    CHECK(!p.steps[4].gate && p.steps[4].tie && p.steps[4].len == 2, "half-step tie at step 4 (len %d)", p.steps[4].len);
+    CHECK(!p.steps[5].gate && !p.steps[5].tie, "step 5 free");
     // A late note (70 % into step 6) goes to step 7; very short: one step.
     advanceSteps(q, 2);
     CHECK(q.pos() == 6, "at step 6, got %d", q.pos());
@@ -62,7 +64,7 @@ static void checkRecording() {
     q.noteOn(-0.5f);
     runInternal(q, kStepSamples / 20);
     q.noteOff();
-    CHECK(p.steps[7].gate && p.steps[7].cv == -0.5f && !p.steps[8].tie, "late short note on step 7");
+    CHECK(p.steps[7].gate && p.steps[7].cv == -0.5f && p.steps[7].len == 1 && !p.steps[8].tie, "late short note on step 7: a quarter (len %d)", p.steps[7].len);
     CHECK(!p.steps[6].gate, "step 6 stays free");
     // Overdub: a long note from step 1 covering 2..3 replaces the first note and keeps no tail.
     q.stop();
@@ -75,7 +77,7 @@ static void checkRecording() {
     q.noteOff();
     CHECK(p.steps[1].gate && p.steps[1].cv == 2.0f, "overdub starts at 1");
     CHECK(p.steps[2].tie && !p.steps[2].gate && p.steps[2].cv == 2.0f, "step 2 now a tie of the new note");
-    CHECK(p.steps[3].tie && !p.steps[4].tie && !p.steps[4].gate, "ends at 3, no tail");
+    CHECK(p.steps[3].tie && p.steps[3].len == 4 && !p.steps[4].tie && !p.steps[4].gate, "ends at 3 full, no tail");
     CHECK(p.steps[7].gate, "the other note is untouched");
     // Note held longer than the pattern: full length.
     q.clearCurrent();
@@ -95,9 +97,9 @@ static void checkRecording() {
 static void checkPlayback() {
     minty::Sequencer q;
     minty::Pattern& p = q.currentPattern();
-    p.writeNote(0, 2, 1.f);  // steps 0-1
-    p.writeNote(2, 1, 2.f);  // step 2 right after: retrigger
-    p.writeNote(5, 1, 3.f);
+    p.writeNote(0, 8, 1.f);  // steps 0-1
+    p.writeNote(2, 4, 2.f);  // step 2 right after: retrigger
+    p.writeNote(5, 2, 3.f);  // half a step
     q.start();
     // step 0
     runInternal(q, 1);
@@ -110,10 +112,29 @@ static void checkPlayback() {
     CHECK(q.pos() == 3 && !q.trackGate(0), "step 3 silent");
     advanceSteps(q, 2);
     CHECK(q.pos() == 5 && q.trackGate(0) && q.trackCv(0) == 3.f && !q.takeRetrigger(0), "step 5 from silence: no retrigger");
+    runInternal(q, int(0.4 * kStepSamples));
+    CHECK(q.trackGate(0), "half-step note still on at 40 %%");
+    runInternal(q, int(0.2 * kStepSamples));
+    CHECK(!q.trackGate(0), "half-step note off at 60 %%");
+    // quarter and three-quarter lengths
+    p.writeNote(7, 1, 1.f);
+    p.writeNote(9, 3, 1.f);
+    advanceSteps(q, 2);
+    CHECK(q.pos() == 7 && q.trackGate(0), "quarter note on");
+    runInternal(q, int(0.3 * kStepSamples));
+    CHECK(!q.trackGate(0), "quarter note off at 30 %%");
+    advanceSteps(q, 2);
+    runInternal(q, int(0.7 * kStepSamples));
+    CHECK(q.pos() == 9 && q.trackGate(0), "three-quarter note on at 70 %%");
+    runInternal(q, int(0.1 * kStepSamples));
+    CHECK(!q.trackGate(0), "three-quarter note off at 80 %%");
+    p.steps[7] = minty::Step();
+    p.steps[9] = minty::Step();
+    advanceSteps(q, 1);  // step 10
     // other tracks silent
     for (int t = 1; t < minty::kTracks; t++) CHECK(!q.trackGate(t), "track %d silent", t);
     // wraps after 64 steps
-    advanceSteps(q, 59);
+    advanceSteps(q, 54);
     CHECK(q.pos() == 0 && q.trackGate(0) && q.trackCv(0) == 1.f, "wrapped to step 0 (pos %d)", q.pos());
     // A/B: pattern B is empty; switching silences the track at its next step; switching back plays.
     q.toggleAB(0);
@@ -137,7 +158,7 @@ static void checkPlayback() {
 
 static void checkExternalClock() {
     minty::Sequencer q;
-    q.currentPattern().writeNote(1, 1, 1.f);
+    q.currentPattern().writeNote(1, 4, 1.f);  // a full step
     q.start();
     const double dt = 1.0 / kFs;
     const int period = 6000;  // samples per pulse

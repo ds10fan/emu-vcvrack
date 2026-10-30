@@ -13,10 +13,15 @@ constexpr int kSets = 10;
 constexpr int kPatterns = 2;
 constexpr int kSteps = 64;  // 4 bars x 16
 
+// Note lengths are quantised to quarters of a step: a note is whole steps (ties) plus a final
+// step whose gate lasts `len` quarters (1..4).
+constexpr int kQuarters = 4;
+
 struct Step {
     float cv = 0.f;
-    bool gate = false;  // a note starts here
-    bool tie = false;   // the previous step's note continues through this one
+    bool gate = false;    // a note starts here
+    bool tie = false;     // the previous step's note continues through this one
+    uint8_t len = 4;      // quarters of this step the gate stays high (only matters on a note's last step)
 };
 
 struct Pattern {
@@ -29,21 +34,24 @@ struct Pattern {
             if (s.gate || s.tie) return false;
         return true;
     }
-    // Write a note of `len` steps starting at `start`, replacing whatever it covers and cutting
-    // the tail of any note that continued past its end.
-    void writeNote(int start, int len, float cv) {
-        if (len < 1) len = 1;
-        if (len > kSteps) len = kSteps;
-        for (int k = 0; k < len; k++) {
+    // Write a note of `lenQuarters` quarter steps starting at `start`, replacing whatever it
+    // covers and cutting the tail of any note that continued past its end.
+    void writeNote(int start, int lenQuarters, float cv) {
+        if (lenQuarters < 1) lenQuarters = 1;
+        if (lenQuarters > kSteps * kQuarters) lenQuarters = kSteps * kQuarters;
+        const int n = (lenQuarters + kQuarters - 1) / kQuarters;
+        for (int k = 0; k < n; k++) {
             Step& s = steps[(start + k) % kSteps];
             s.cv = cv;
             s.gate = k == 0;
             s.tie = k > 0;
+            s.len = uint8_t(k == n - 1 ? lenQuarters - kQuarters * (n - 1) : kQuarters);
         }
-        for (int k = len; k < kSteps; k++) {
+        for (int k = n; k < kSteps; k++) {
             Step& s = steps[(start + k) % kSteps];
             if (!s.tie) break;
             s.tie = false;
+            s.len = kQuarters;
         }
     }
 };
@@ -170,6 +178,7 @@ public:
             phase_ -= 1.0;
             step(false);
         }
+        endGates();
     }
     // External: `pulse` is true on the sample a clock edge arrives; the period is measured so the
     // recording can still quantise to the nearest step. `fallbackPeriod` is used before two pulses.
@@ -189,34 +198,41 @@ public:
         double period = extPeriod_ > 0.0 ? extPeriod_ : fallbackPeriod;
         phase_ = period > 0.0 ? extElapsed_ / period : 0.0;
         if (phase_ > 0.999) phase_ = 0.999;
+        endGates();
     }
     double externalPeriod() const { return extPeriod_; }
 
     // ---- recording ----
-    // A key went down with this CV. Quantised to the nearest step: the current one if less than
-    // half of it has passed, else the next.
+    // A key went down with this CV. The start is quantised to the nearest step: the current one
+    // if less than half of it has passed, else the next.
     void noteOn(float cv) {
         if (!recording) return;
         if (recActive_) noteOff();
         recStart_ = nearestStep();
+        // Where the quantised start lies relative to now, in steps (negative: moved back).
+        recStartOffset_ = pendingFirst_ ? 0.0 : (recStart_ == pos_ ? -phase_ : 1.0 - phase_);
+        recPhaseOn_ = pendingFirst_ ? 0.0 : phase_;
         recCv_ = cv;
         recSteps_ = 0;
         recActive_ = true;
     }
-    // The key came up: write the note with its quantised length (at least one step).
+    // The key came up: the length from the quantised start is rounded to quarters of a step
+    // (at least one quarter, at most the whole pattern) and the note written.
     void noteOff() {
         if (!recActive_) return;
         recActive_ = false;
-        int end = nearestStep();
-        int len = (end - recStart_ + kSteps) % kSteps;
-        if (recSteps_ >= kSteps) len = kSteps;
-        if (len < 1) len = 1;
+        double held = recSteps_ + (phase_ - recPhaseOn_);
+        double lenSteps = held - recStartOffset_;
+        int lenQ = int(lenSteps * kQuarters + 0.5);
+        if (recSteps_ >= kSteps) lenQ = kSteps * kQuarters;
+        if (lenQ < 1) lenQ = 1;
+        if (lenQ > kSteps * kQuarters) lenQ = kSteps * kQuarters;
         Pattern& p = currentPattern();
-        p.writeNote(recStart_, len, recCv_);
+        p.writeNote(recStart_, lenQ, recCv_);
         // If the note's first step is already past, the playback state would not have seen it:
         // sound it from here on so the recorded and the heard note agree.
-        int rel = (pos_ - recStart_ + kSteps) % kSteps;
-        if (rel < len) {
+        double rel = (pos_ - recStart_ + kSteps) % kSteps + phase_;
+        if (rel * kQuarters < lenQ) {
             cv_[currentTrack] = recCv_;
             gate_[currentTrack] = true;
         }
@@ -227,6 +243,15 @@ private:
     int nearestStep() const {
         if (pendingFirst_) return 0;
         return phase_ < 0.5 ? pos_ : (pos_ + 1) % kSteps;
+    }
+
+    // A note's last step ends its gate after `len` quarters of the step.
+    void endGates() {
+        for (int t = 0; t < kTracks; t++) {
+            if (!gate_[t]) continue;
+            const Step& s = playingPattern(t).steps[pos_];
+            if ((s.gate || s.tie) && phase_ >= s.len / double(kQuarters)) gate_[t] = false;
+        }
     }
 
     void step(bool first) {
@@ -259,6 +284,7 @@ private:
     bool retrig_[kTracks] = {false, false, false, false, false, false, false};
     bool recActive_ = false;
     int recStart_ = 0, recSteps_ = 0;
+    double recStartOffset_ = 0.0, recPhaseOn_ = 0.0;
     float recCv_ = 0.f;
 };
 
