@@ -46,7 +46,7 @@ more parameters than the module has controls for.
 
 | Control | Function |
 |---|---|
-| TYPE | filter type (snap knob; also in the context menu); the display shows the E4 menu name |
+| TYPE | filter type: click the display (left or right button) for the list of types, step with the < and > buttons (wrapping around) or scroll over the display; also in the context menu. The display shows the E4 menu name |
 | CUTOFF, CV, attenuverter | cutoff 0..255 as on the E4, with 32 steps per volt of CV (about one octave on the lowpass display law) |
 | Q, CV, attenuverter | the second parameter, 0..127 (Q, Gain, Resonance, Body Size or Fuzz depending on the type), 10 V of CV for the full range |
 | DRIVE | input level into the chip, −24 to +24 dB, compensated at the output; 5 V peak is 16-bit full scale at 0 dB |

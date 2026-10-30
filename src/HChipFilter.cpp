@@ -51,7 +51,17 @@ const char* chipFreqText(int menu, int cutoff, float sampleRate, char* buf, size
 }  // namespace
 
 struct HChipFilter : Module {
-    enum ParamId { TYPE_PARAM, CUTOFF_PARAM, CUTOFF_CV_PARAM, Q_PARAM, Q_CV_PARAM, DRIVE_PARAM, PARAMS_LEN };
+    enum ParamId {
+        TYPE_PARAM,
+        CUTOFF_PARAM,
+        CUTOFF_CV_PARAM,
+        Q_PARAM,
+        Q_CV_PARAM,
+        DRIVE_PARAM,
+        TYPE_PREV_PARAM,
+        TYPE_NEXT_PARAM,
+        PARAMS_LEN
+    };
     enum InputId { IN_INPUT, CUTOFF_INPUT, Q_INPUT, INPUTS_LEN };
     enum OutputId { OUT_OUTPUT, OUTPUTS_LEN };
     enum LightId { CLIP_LIGHT, LIGHTS_LEN };
@@ -74,6 +84,7 @@ struct HChipFilter : Module {
 
     dsp::ClockDivider lightDivider;
     dsp::ClockDivider settingsDivider;
+    dsp::BooleanTrigger prevTrigger, nextTrigger;
     float clipLevel = 0.f;
 
     struct CutoffQuantity : ParamQuantity {
@@ -116,6 +127,8 @@ struct HChipFilter : Module {
         paramQuantities[Q_PARAM]->snapEnabled = true;
         configParam(Q_CV_PARAM, -1.f, 1.f, 0.f, "Q CV amount", "%", 0.f, 100.f);
         configParam(DRIVE_PARAM, -24.f, 24.f, 0.f, "Drive", " dB");
+        configButton(TYPE_PREV_PARAM, "Previous filter type");
+        configButton(TYPE_NEXT_PARAM, "Next filter type");
         configInput(IN_INPUT, "Audio");
         configInput(CUTOFF_INPUT, "Cutoff CV (32 steps per volt)");
         configInput(Q_INPUT, "Q CV (10 V for the full range)");
@@ -131,9 +144,15 @@ struct HChipFilter : Module {
         applyWidths();
     }
 
-    int currentMenu() {
-        int t = clamp((int)std::lround(params[TYPE_PARAM].getValue()), 0, kNumTypes - 1);
-        return kMenuOf[t];
+    int currentType() { return clamp((int)std::lround(params[TYPE_PARAM].getValue()), 0, kNumTypes - 1); }
+
+    int currentMenu() { return kMenuOf[currentType()]; }
+
+    // Steps the type parameter, wrapping around at both ends.
+    void stepType(int delta) {
+        int t = (currentType() + delta) % kNumTypes;
+        if (t < 0) t += kNumTypes;
+        params[TYPE_PARAM].setValue(t);
     }
 
     hchip::Params widthParams() const {
@@ -165,6 +184,8 @@ struct HChipFilter : Module {
 
     void process(const ProcessArgs& args) override {
         if (settingsDivider.process() && widthsChanged()) applyWidths();
+        if (prevTrigger.process(params[TYPE_PREV_PARAM].getValue() > 0.f)) stepType(-1);
+        if (nextTrigger.process(params[TYPE_NEXT_PARAM].getValue() > 0.f)) stepType(1);
 
         const int channels = std::max(1, inputs[IN_INPUT].getChannels());
         const int menu = currentMenu();
@@ -235,9 +256,62 @@ struct HChipFilter : Module {
     }
 };
 
-// Two lines: the filter type, then the E4's readout of cutoff and second parameter.
+// Sets the type parameter from the UI thread, as an undoable step.
+static void setTypeParam(HChipFilter* module, int type) {
+    type = clamp(type, 0, kNumTypes - 1);
+    if (type == module->currentType()) return;
+    history::ParamChange* h = new history::ParamChange;
+    h->name = "change filter type";
+    h->moduleId = module->id;
+    h->paramId = HChipFilter::TYPE_PARAM;
+    h->oldValue = module->params[HChipFilter::TYPE_PARAM].getValue();
+    h->newValue = type;
+    APP->engine->setParamValue(module, HChipFilter::TYPE_PARAM, type);
+    APP->history->push(h);
+}
+
+// Two lines: the filter type, then the E4's readout of cutoff and second parameter. It is also
+// the type selector: a click opens the list of types, the scroll wheel steps through them.
 struct TypeDisplay : widget::Widget {
     HChipFilter* module = nullptr;
+    float scrollAccum = 0.f;
+
+    void createTypeMenu() {
+        ui::Menu* menu = createMenu();
+        menu->addChild(createMenuLabel("Filter type"));
+        for (int i = 0; i < kNumTypes; i++) {
+            menu->addChild(createCheckMenuItem(
+                emuz::filterDesc(kMenuOf[i]).name, "",
+                [=]() { return module->currentType() == i; },
+                [=]() { setTypeParam(module, i); }));
+        }
+    }
+
+    void onButton(const ButtonEvent& e) override {
+        Widget::onButton(e);
+        if (e.isConsumed() || !module) return;
+        if (e.action == GLFW_PRESS && (e.button == GLFW_MOUSE_BUTTON_LEFT || e.button == GLFW_MOUSE_BUTTON_RIGHT)) {
+            e.consume(this);
+            createTypeMenu();
+        }
+    }
+
+    void onHoverScroll(const HoverScrollEvent& e) override {
+        if (!module) return;
+        e.consume(this);
+        // One wheel notch is 50 units (10 on macOS); trackpads deliver it in small pieces.
+#if defined ARCH_MAC
+        const float notch = 10.f;
+#else
+        const float notch = 50.f;
+#endif
+        scrollAccum += e.scrollDelta.y;
+        int steps = (int)(scrollAccum / notch);
+        if (steps != 0) {
+            scrollAccum -= steps * notch;
+            setTypeParam(module, module->currentType() + steps);
+        }
+    }
 
     void draw(const DrawArgs& args) override {
         nvgBeginPath(args.vg);
@@ -300,6 +374,8 @@ struct HChipFilterWidget : ModuleWidget {
             {Vec(30.48f, 7.5f), "H-CHIP", 15.f, true, light},
             {Vec(30.48f, 13.2f), "US 5,170,369 filter section", 7.f, false, kPanelGrey},
             {Vec(12.f, 34.2f), "TYPE", 8.f, true, dark},
+            {Vec(7.5f, 47.8f), "<", 8.f, true, dark},
+            {Vec(16.5f, 47.8f), ">", 8.f, true, dark},
             {Vec(48.96f, 34.2f), "DRIVE", 8.f, true, dark},
             {Vec(17.5f, 71.3f), "CUTOFF", 8.f, true, dark},
             {Vec(43.46f, 71.3f), "Q", 8.f, true, dark},
@@ -316,7 +392,8 @@ struct HChipFilterWidget : ModuleWidget {
         display->module = module;
         addChild(display);
 
-        addParam(createParamCentered<RoundSmallBlackKnob>(mm2px(Vec(12.f, 42.f)), module, HChipFilter::TYPE_PARAM));
+        addParam(createParamCentered<TL1105>(mm2px(Vec(7.5f, 42.f)), module, HChipFilter::TYPE_PREV_PARAM));
+        addParam(createParamCentered<TL1105>(mm2px(Vec(16.5f, 42.f)), module, HChipFilter::TYPE_NEXT_PARAM));
         addParam(createParamCentered<RoundSmallBlackKnob>(mm2px(Vec(48.96f, 42.f)), module, HChipFilter::DRIVE_PARAM));
         addParam(createParamCentered<RoundLargeBlackKnob>(mm2px(Vec(17.5f, 59.f)), module, HChipFilter::CUTOFF_PARAM));
         addParam(createParamCentered<RoundLargeBlackKnob>(mm2px(Vec(43.46f, 59.f)), module, HChipFilter::Q_PARAM));
@@ -339,8 +416,8 @@ struct HChipFilterWidget : ModuleWidget {
         for (int i = 0; i < kNumTypes; i++) names.push_back(emuz::filterDesc(kMenuOf[i]).name);
         menu->addChild(createIndexSubmenuItem(
             "Filter type", names,
-            [=]() { return clamp((int)std::lround(module->params[HChipFilter::TYPE_PARAM].getValue()), 0, kNumTypes - 1); },
-            [=](int i) { module->params[HChipFilter::TYPE_PARAM].setValue(i); }));
+            [=]() { return (size_t)module->currentType(); },
+            [=](size_t i) { setTypeParam(module, (int)i); }));
 
         menu->addChild(new MenuSeparator);
         menu->addChild(createMenuLabel("Chip datapath (not fixed by the patent)"));

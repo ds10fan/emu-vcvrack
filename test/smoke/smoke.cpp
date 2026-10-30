@@ -170,6 +170,31 @@ int main() {
             fails++;
         }
     }
+    // the step buttons: a press is one step, wrapping around at both ends
+    {
+        Module::ProcessArgs a;
+        a.sampleRate = 48000.f;
+        a.sampleTime = 1.f / 48000.f;
+        auto press = [&](int param) {
+            m.params[param].setValue(1.f);
+            m.process(a);
+            m.process(a);  // held: no second step
+            m.params[param].setValue(0.f);
+            m.process(a);
+        };
+        m.params[HChipFilter::TYPE_PARAM].setValue(0);
+        press(HChipFilter::TYPE_PREV_PARAM);
+        int t = (int)m.params[HChipFilter::TYPE_PARAM].getValue();
+        std::printf("prev from 0: type %d\n", t);
+        if (t != kNumTypes - 1) fails++;
+        press(HChipFilter::TYPE_NEXT_PARAM);
+        t = (int)m.params[HChipFilter::TYPE_PARAM].getValue();
+        std::printf("next from %d: type %d\n", kNumTypes - 1, t);
+        if (t != 0) fails++;
+        press(HChipFilter::TYPE_NEXT_PARAM);
+        t = (int)m.params[HChipFilter::TYPE_PARAM].getValue();
+        if (t != 1) fails++;
+    }
     // cost: 16 channels of the 6-pole lowpass with a moving cutoff
     m.params[HChipFilter::TYPE_PARAM].setValue(2);
     Module::ProcessArgs args;
