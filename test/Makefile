@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++11 -O2 -Wall -Wextra
 DSP := ../dsp/hchip.cpp ../dsp/emu_filters.cpp
 HDR := ../dsp/hchip.hpp ../dsp/emu_filters.hpp
 
-all: check
+all: check ds10
 
 build/hchip_test: hchip_test.cpp $(DSP) $(HDR)
 	@mkdir -p build
@@ -14,10 +14,17 @@ build/hchip_test: hchip_test.cpp $(DSP) $(HDR)
 check: build/hchip_test
 	./build/hchip_test expected/vectors.txt
 
+build/ds10_test: ds10_test.cpp ../dsp/ds10_drive.hpp
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ ds10_test.cpp
+
+ds10: build/ds10_test
+	./build/ds10_test
+
 clean:
 	rm -rf build
 
-.PHONY: all check clean
+.PHONY: all check ds10 clean
 
 # Headless test of the Rack module against the SDK's libRack.so (needs ../sdk/Rack-SDK)
 RACK_DIR ?= ../sdk/Rack-SDK

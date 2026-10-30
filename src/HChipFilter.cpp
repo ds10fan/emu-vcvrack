@@ -9,6 +9,7 @@
 
 #include "emu_filters.hpp"
 #include "hchip.hpp"
+#include "widgets.hpp"
 
 namespace {
 
@@ -281,33 +282,6 @@ struct TypeDisplay : widget::Widget {
     }
 };
 
-// Panel labels drawn at runtime (the SVG holds only the graphics).
-struct PanelLabels : widget::Widget {
-    struct Label {
-        Vec pos;      // mm, centre
-        const char* text;
-        float size;
-        bool bold;
-        NVGcolor color;
-    };
-    std::vector<Label> labels;
-
-    void draw(const DrawArgs& args) override {
-        std::shared_ptr<window::Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
-        std::shared_ptr<window::Font> bold = APP->window->loadFont(asset::system("res/fonts/DejaVuSans-Bold.ttf"));
-        if (!font) return;
-        nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        for (const Label& l : labels) {
-            nvgFontFaceId(args.vg, (l.bold && bold) ? bold->handle : font->handle);
-            nvgFontSize(args.vg, l.size);
-            nvgFillColor(args.vg, l.color);
-            Vec p = mm2px(l.pos);
-            nvgText(args.vg, p.x, p.y, l.text, nullptr);
-        }
-        Widget::draw(args);
-    }
-};
-
 struct HChipFilterWidget : ModuleWidget {
     HChipFilterWidget(HChipFilter* module) {
         setModule(module);
@@ -318,13 +292,13 @@ struct HChipFilterWidget : ModuleWidget {
         addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
         addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
 
-        const NVGcolor dark = nvgRGB(0x20, 0x20, 0x24);
-        const NVGcolor light = nvgRGB(0xf0, 0xf0, 0xf0);
+        const NVGcolor dark = kPanelDark;
+        const NVGcolor light = kPanelLight;
         PanelLabels* labels = new PanelLabels;
         labels->box = Rect(Vec(0, 0), box.size);
         labels->labels = {
             {Vec(30.48f, 7.5f), "H-CHIP", 15.f, true, light},
-            {Vec(30.48f, 13.2f), "US 5,170,369 filter section", 7.f, false, nvgRGB(0xb0, 0xb0, 0xb0)},
+            {Vec(30.48f, 13.2f), "US 5,170,369 filter section", 7.f, false, kPanelGrey},
             {Vec(12.f, 34.2f), "TYPE", 8.f, true, dark},
             {Vec(48.96f, 34.2f), "DRIVE", 8.f, true, dark},
             {Vec(17.5f, 71.3f), "CUTOFF", 8.f, true, dark},

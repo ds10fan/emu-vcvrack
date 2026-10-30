@@ -1,6 +1,6 @@
 # emu-vcvrack: the E-mu H-chip filter as a VCV Rack module
 
-A VCV Rack 2 plugin with one module, **H-Chip Filter**: the digital filter section of E-mu's
+A VCV Rack 2 plugin with two modules. **H-Chip Filter** is the digital filter section of E-mu's
 patent US 5,170,369 (Rossum, "Dynamic digital IIR audio filter"), the filter block of the
 Emulator IV's H-chip, run cycle by cycle, and programmed with the filter recipes of the EOS
 firmware. Thirty of the E4's filter types are available: the stock lowpass, highpass, bandpass,
@@ -57,6 +57,17 @@ display law (`fil_freq`), the gain in dB for the EQ types, or the raw value. The
 scaled by the engine sample rate over 48 kHz: the chip runs at the engine rate and its
 coefficients do not know the clock, so at 96 kHz the same words sit one octave higher.
 
+## DS10 Drive
+
+A second, small module: a hard clipper whose drive also sets the dry/wet mix,
+
+```
+out = mix(in, clamp(in * drive * 4, -1, 1), drive),   mix(a, b, t) = a + (b - a) t
+```
+
+per sample (`dsp/ds10_drive.hpp`), with 5 V as the 1.0 of the formula. DRIVE knob 0..100 %,
+CV input with attenuverter (10 V for the full range), drive clamped to 0..1, polyphonic.
+
 ## Build
 
 ```
@@ -73,6 +84,7 @@ make install        # copies it into ~/.local/share/Rack2/plugins-lin-x64/
 
 ```
 make -C test check    # dsp/hchip.cpp against test/expected/vectors.txt, the recipes, and the measured responses
+make -C test ds10     # the DS10 drive formula
 make -C test smoke    # the Rack module headless against the SDK's libRack.so (16 channels, every type, cost)
 ```
 
@@ -87,10 +99,14 @@ order highpass at cutoff 128, Q 64).
 ```
 plugin.json, Makefile        the Rack plugin
 src/plugin.cpp, plugin.hpp   plugin entry
-src/HChipFilter.cpp          the module: voices, controls, display, context menu, panel labels
-res/HChipFilter.svg          the panel graphics (labels are drawn at runtime)
+src/HChipFilter.cpp          the filter module: voices, controls, display, context menu
+src/DS10Drive.cpp            the drive module
+src/widgets.hpp              runtime panel labels shared by the modules
+res/HChipFilter.svg, DS10Drive.svg   the panel graphics (labels are drawn at runtime)
 dsp/hchip.hpp, hchip.cpp     the chip model
+dsp/ds10_drive.hpp           the drive formula
 dsp/emu_filters.hpp, .cpp    the EOS filter recipes
 test/hchip_test.cpp          DSP tests; test/expected/vectors.txt the reference vectors
+test/ds10_test.cpp           drive formula test
 test/smoke/smoke.cpp         headless module test
 ```

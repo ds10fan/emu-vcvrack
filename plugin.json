@@ -17,7 +17,20 @@
       "slug": "HChipFilter",
       "name": "H-Chip Filter",
       "description": "Cycle-level model of the Emulator IV filter chip (US 5,170,369) programmed with the EOS stock filter recipes",
-      "tags": ["Filter", "Polyphonic", "Hardware clone"]
+      "tags": [
+        "Filter",
+        "Polyphonic",
+        "Hardware clone"
+      ]
+    },
+    {
+      "slug": "DS10Drive",
+      "name": "DS10 Drive",
+      "description": "Hard clipper whose drive also sets the dry/wet mix: mix(in, clamp(in * drive * 4, -1, 1), drive)",
+      "tags": [
+        "Distortion",
+        "Polyphonic"
+      ]
     }
   ]
 }

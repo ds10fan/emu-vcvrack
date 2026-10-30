@@ -5,4 +5,5 @@ Plugin* pluginInstance;
 void init(Plugin* p) {
     pluginInstance = p;
     p->addModel(modelHChipFilter);
+    p->addModel(modelDS10Drive);
 }
