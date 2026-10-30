@@ -214,7 +214,7 @@ struct MidiVerbWidget : ModuleWidget {
             {Vec(13.f, 54.f), "MIX", 8.f, true, kPanelDark},
             {Vec(37.8f, 54.f), "FEEDBACK", 7.f, true, kPanelDark},
             {Vec(13.f, 87.5f), "IN", 8.f, true, kPanelDark},
-            {Vec(37.8f, 87.5f), "OUT", 8.f, true, kPanelDark},
+            {Vec(37.8f, 88.f), "OUT", 8.f, true, kPanelLight},
             {Vec(5.f, 96.f), "L", 7.f, true, kPanelDark},
             {Vec(5.f, 111.f), "R", 7.f, true, kPanelDark},
         };

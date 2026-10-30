@@ -87,6 +87,8 @@ struct HChipFilter : Module {
     dsp::ClockDivider settingsDivider;
     dsp::BooleanTrigger prevTrigger, nextTrigger;
     float clipLevel = 0.f;
+    float clipHold = 0.f;      // seconds the light stays fully on after an event
+    bool inputClamped = false; // the input exceeded the input bus since the last light update
 
     struct CutoffQuantity : ParamQuantity {
         std::string getLabel() override {
@@ -134,7 +136,7 @@ struct HChipFilter : Module {
         configInput(CUTOFF_INPUT, "Cutoff CV (32 steps per volt)");
         configInput(Q_INPUT, "Q CV (10 V for the full range)");
         configOutput(OUT_OUTPUT, "Audio");
-        configLight(CLIP_LIGHT, "Chip saturation (delay memory, multiplier operand or accumulator)");
+        configLight(CLIP_LIGHT, "Chip overflow: delay memory or multiplier operand saturated, accumulator wrapped or saturated, product saturated, input clamped");
         configBypass(IN_INPUT, OUT_OUTPUT);
         lightDivider.setDivision(64);
         settingsDivider.setDivision(256);
@@ -219,6 +221,7 @@ struct HChipFilter : Module {
             float in = inputs[IN_INPUT].getPolyVoltage(c) * inScale;
             // the input bus is as wide as the accumulator: clamp to its range
             const float inMax = float((int64_t(1) << (applied.accBits - 1)) - 1);
+            if (in > inMax || in < -inMax) inputClamped = true;
             int64_t x = (int64_t)std::lround(clamp(in, -inMax, inMax));
             int64_t y = v.process(x);
             outputs[OUT_OUTPUT].setVoltage((float)y * outScale, c);
@@ -235,11 +238,23 @@ struct HChipFilter : Module {
             for (int c = 0; c < channels; c++) {
                 hchip::Stats s = voices[c].stats();
                 const hchip::Stats& l = lastStats[c];
-                if (s.delaySat != l.delaySat || s.multInSat != l.multInSat || s.accOverflow != l.accOverflow)
+                if (s.delaySat != l.delaySat || s.multInSat != l.multInSat || s.accOverflow != l.accOverflow ||
+                    s.productSat != l.productSat)
                     clipped = true;
                 lastStats[c] = s;
             }
-            clipLevel = clipped ? 1.f : clipLevel * 0.85f;
+            if (inputClamped) clipped = true;
+            inputClamped = false;
+            // A single wrap is one sample: hold the light 150 ms so it can be seen, then fade.
+            const float dt = args.sampleTime * lightDivider.getDivision();
+            if (clipped) {
+                clipHold = 0.15f;
+                clipLevel = 1.f;
+            } else if (clipHold > 0.f) {
+                clipHold -= dt;
+            } else {
+                clipLevel *= std::exp(-dt / 0.05f);
+            }
             lights[CLIP_LIGHT].setBrightness(clipLevel);
         }
     }

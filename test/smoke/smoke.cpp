@@ -401,6 +401,29 @@ int main() {
     std::printf("hp4 q64 c128 (16 ch), 100 Hz: %.2f dB, 5 kHz: %.2f dB\n", lo, hi);
     if (!(lo < -30 && std::fabs(hi - 0.86) < 0.3)) fails++;
     if (m.outputs[HChipFilter::OUT_OUTPUT].getChannels() != 16) fails++;
+    // 6 Pole Low-pass, Q 127, a 10 V square at +24 dB drive, 20-bit accumulator: the input sits
+    // at the accumulator's limit, X - Z wraps, and the clip light comes on
+    {
+        HChipFilter h;
+        h.params[HChipFilter::TYPE_PARAM].setValue(2);
+        h.params[HChipFilter::Q_PARAM].setValue(127);
+        h.params[HChipFilter::CUTOFF_PARAM].setValue(128);
+        h.params[HChipFilter::DRIVE_PARAM].setValue(24.f);
+        h.inputs[HChipFilter::IN_INPUT].channels = 1;
+        Module::ProcessArgs a;
+        a.sampleRate = 48000.f;
+        a.sampleTime = 1.f / 48000.f;
+        float light = 0.f;
+        for (int i = 0; i < 9600; i++) {
+            h.inputs[HChipFilter::IN_INPUT].setVoltage((i / 24) % 2 ? 10.f : -10.f);
+            h.process(a);
+            light = std::max(light, h.lights[HChipFilter::CLIP_LIGHT].getBrightness());
+        }
+        hchip::Stats st = h.voices[0].stats();
+        std::printf("hchip 20-bit hot: acc wraps %llu, delay sat %llu, light %.2f\n", (unsigned long long)st.accOverflow,
+                    (unsigned long long)st.delaySat, light);
+        if (st.accOverflow == 0 || light < 1.f) fails++;
+    }
     // every type runs
     for (int t = 0; t < kNumTypes; t++) {
         m.params[HChipFilter::TYPE_PARAM].setValue(t);

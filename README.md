@@ -1,5 +1,13 @@
 # emu-vcvrack: E-mu chips as VCV Rack modules
 
+These are some of modules I never got around writing. Everything slopped to the last bit. The
+E-mu filter is actually simulation of the internal structure of the ASIC (path-widths and
+saturation points mostly guessed).
+
+![G-Chip, H-Chip, DS10 Drive and MidiVerb in VCV Rack](docs/screenshot.png)
+
+<br>
+
 A VCV Rack 2 plugin with five modules: the H-chip filter, the G-chip sample interpolator as a
 sampler, a small drive, a 7-track CV/gate recorder, and the Alesis MIDIverb ROM emulator. **H-Chip Filter** is the digital filter section of E-mu's
 patent US 5,170,369 (Rossum, "Dynamic digital IIR audio filter"), the filter block of the
@@ -53,7 +61,7 @@ more parameters than the module has controls for.
 | Q, CV, attenuverter | the second parameter, 0..127 (Q, Gain, Resonance, Body Size or Fuzz depending on the type), 10 V of CV for the full range |
 | DRIVE | input level into the chip, −24 to +24 dB, compensated at the output; 5 V peak is 16-bit full scale at 0 dB |
 | IN, OUT | audio, polyphonic (one chip voice per channel) |
-| CLIP | lights when the delay memory, the multiplier operand or the accumulator saturated |
+| CLIP | lights for 150 ms when anything in the chip overflows: delay memory or multiplier operand saturated, accumulator wrapped (or saturated), product saturated, input clamped to the input bus |
 
 The display's second line is what the E4 shows for the two parameters: the frequency of the
 display law (`fil_freq`), the gain in dB for the EQ types, or the raw value. The frequency is
