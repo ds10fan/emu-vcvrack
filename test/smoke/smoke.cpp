@@ -8,6 +8,7 @@
 #include <cstdio>
 
 #include "../../src/GChip.cpp"
+#include "../../src/MintySeq.cpp"
 #include "../../src/HChipFilter.cpp"
 
 Plugin* pluginInstance = nullptr;
@@ -133,8 +134,117 @@ static int smokeGChip() {
     return fails;
 }
 
+static int smokeMintySeq() {
+    int fails = 0;
+    MintySeq m;
+    Module::ProcessArgs args;
+    args.sampleRate = 48000.f;
+    args.sampleTime = 1.f / 48000.f;
+    auto press = [&](int param) {
+        m.params[param].setValue(1.f);
+        m.process(args);
+        m.params[param].setValue(0.f);
+        m.process(args);
+    };
+    // Run until the play head arrives at `step` afresh (a pattern or set change applies at the
+    // next step boundary, so being there already does not count).
+    auto advanceTo = [&](int step) {
+        for (int i = 0; i < 70 * 5670 && m.seq.pos() == step; i++) m.process(args);
+        for (int i = 0; i < 70 * 5670 && m.seq.pos() != step; i++) m.process(args);
+    };
+    // Rack's BooleanTrigger starts high: one process() with the buttons up before the first press.
+    m.process(args);
+    // REC arms and starts
+    press(MintySeq::REC_PARAM);
+    if (!(m.seq.running && m.seq.recording)) fails++;
+    // a 2 V note from step 4 held 1.6 steps (nearest: two steps); while held the selected track monitors it
+    advanceTo(4);
+    m.inputs[MintySeq::GATE_INPUT].setVoltage(10.f);
+    m.inputs[MintySeq::CV_INPUT].setVoltage(2.f);
+    m.process(args);
+    bool monitor = m.outputs[MintySeq::CV_OUTPUT].getVoltage() == 2.f && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 10.f;
+    for (int i = 0; i < int(1.6 * 5669); i++) m.process(args);
+    m.inputs[MintySeq::GATE_INPUT].setVoltage(0.f);
+    m.process(args);
+    const minty::Pattern& p = m.seq.currentPattern();
+    bool recorded = p.steps[4].gate && p.steps[4].cv == 2.f && p.steps[5].tie && !p.steps[6].tie && !p.steps[6].gate;
+    std::printf("minty: monitor %d, recorded note at step 4 len 2: %d\n", monitor, recorded);
+    if (!monitor || !recorded) fails++;
+    // stop, start, play back: step 4 sounds 2 V, step 6 is silent, track 2 silent
+    press(MintySeq::PLAY_PARAM);
+    if (m.seq.running || m.outputs[MintySeq::GATE_OUTPUT].getVoltage() != 0.f) fails++;
+    press(MintySeq::PLAY_PARAM);
+    advanceTo(4);
+    for (int i = 0; i < 100; i++) m.process(args);  // past the retrigger gap
+    bool play4 = m.outputs[MintySeq::CV_OUTPUT].getVoltage() == 2.f && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 10.f &&
+                 m.outputs[MintySeq::GATE_OUTPUT + 1].getVoltage() == 0.f;
+    advanceTo(6);
+    bool play6 = m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f;
+    std::printf("minty: playback step 4 %d, step 6 silent %d\n", play4, play6);
+    if (!play4 || !play6) fails++;
+    // A/B: B is empty
+    press(MintySeq::AB_PARAM);
+    advanceTo(4);
+    for (int i = 0; i < 100; i++) m.process(args);
+    bool bSilent = m.seq.ab(0) == 1 && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f;
+    press(MintySeq::AB_PARAM);
+    // sets: set 2 is empty, back to set 1 plays
+    press(MintySeq::SET_NEXT_PARAM);
+    advanceTo(4);
+    for (int i = 0; i < 100; i++) m.process(args);
+    bool set2Silent = m.seq.currentSet == 1 && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f;
+    press(MintySeq::SET_PREV_PARAM);
+    advanceTo(4);
+    for (int i = 0; i < 100; i++) m.process(args);
+    bool set1Plays = m.seq.currentSet == 0 && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 10.f;
+    std::printf("minty: B silent %d, set 2 silent %d, set 1 plays %d\n", bSilent, set2Silent, set1Plays);
+    if (!bSilent || !set2Silent || !set1Plays) fails++;
+    // keyboard requests and clear
+    m.request(MintySeq::REQ_TRACK_DOWN);
+    m.process(args);
+    bool track2 = m.seq.currentTrack == 1;
+    m.request(MintySeq::REQ_TRACK_UP);
+    m.process(args);
+    press(MintySeq::CLEAR_PARAM);
+    bool cleared = m.seq.currentTrack == 0 && p.empty();
+    std::printf("minty: key track down %d, clear %d\n", track2, cleared);
+    if (!track2 || !cleared) fails++;
+    // external clock: steps advance only on pulses
+    m.inputs[MintySeq::CLOCK_INPUT].channels = 1;
+    m.request(MintySeq::REQ_RUN);
+    m.process(args);  // stop
+    m.request(MintySeq::REQ_RUN);
+    m.process(args);  // start: waits for a pulse
+    for (int i = 0; i < 20000; i++) m.process(args);
+    int before = m.seq.pos();
+    m.inputs[MintySeq::CLOCK_INPUT].setVoltage(10.f);
+    m.process(args);
+    m.inputs[MintySeq::CLOCK_INPUT].setVoltage(0.f);
+    m.process(args);
+    int afterFirst = m.seq.pos();
+    m.inputs[MintySeq::CLOCK_INPUT].setVoltage(10.f);
+    m.process(args);
+    m.inputs[MintySeq::CLOCK_INPUT].setVoltage(0.f);
+    m.process(args);
+    int afterSecond = m.seq.pos();
+    std::printf("minty: external clock positions %d -> %d -> %d\n", before, afterFirst, afterSecond);
+    if (!(before == 0 && afterFirst == 0 && afterSecond == 1)) fails++;
+    // patch round trip keeps the notes
+    m.inputs[MintySeq::CLOCK_INPUT].channels = 0;
+    m.seq.currentPattern().writeNote(10, 3, 1.5f);
+    json_t* j = m.dataToJson();
+    MintySeq m2;
+    m2.dataFromJson(j);
+    json_decref(j);
+    const minty::Pattern& p2 = m2.seq.currentPattern();
+    bool roundTrip = p2.steps[10].gate && p2.steps[10].cv == 1.5f && p2.steps[12].tie && !p2.steps[13].tie;
+    std::printf("minty: json round trip %d\n", roundTrip);
+    if (!roundTrip) fails++;
+    return fails;
+}
+
 int main() {
-    int fails = smokeGChip();
+    int fails = smokeGChip() + smokeMintySeq();
     HChipFilter m;
     // 2 Pole Low-pass, Q 0, fully open: flat (the gain word 0xFE, -0.14 dB)
     m.params[HChipFilter::TYPE_PARAM].setValue(0);

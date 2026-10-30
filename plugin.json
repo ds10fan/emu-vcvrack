@@ -41,6 +41,16 @@
         "Polyphonic",
         "Hardware clone"
       ]
+    },
+    {
+      "slug": "MintySeq",
+      "name": "minty-seq",
+      "description": "7-track CV/gate recorder: 4 bars of sixteenths per track, A/B patterns, 10 sets, own clock or external, keyboard shortcuts",
+      "tags": [
+        "Sequencer",
+        "Recording",
+        "Clock generator"
+      ]
     }
   ]
 }

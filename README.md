@@ -1,7 +1,7 @@
 # emu-vcvrack: E-mu chips as VCV Rack modules
 
-A VCV Rack 2 plugin with three modules: the H-chip filter, the G-chip sample interpolator as a
-sampler, and a small drive. **H-Chip Filter** is the digital filter section of E-mu's
+A VCV Rack 2 plugin with four modules: the H-chip filter, the G-chip sample interpolator as a
+sampler, a small drive, and a 7-track CV/gate recorder. **H-Chip Filter** is the digital filter section of E-mu's
 patent US 5,170,369 (Rossum, "Dynamic digital IIR audio filter"), the filter block of the
 Emulator IV's H-chip, run cycle by cycle, and programmed with the filter recipes of the EOS
 firmware. Thirty of the E4's filter types are available: the stock lowpass, highpass, bandpass,
@@ -109,6 +109,39 @@ need no prepared files. The file path is stored in the patch, not the audio.
 Not in the spec and not modelled: the filter family of section 12 (only one impulse response is
 published), the volume and mix stages, the four-bank memory timing.
 
+## minty-seq
+
+A 7-track CV/gate step recorder (`dsp/mintyseq.hpp`, `src/MintySeq.cpp`). Each track is 4 bars
+of sixteenths (64 steps) in two patterns, A and B; ten sets hold seven tracks each. One track is
+selected; what arrives at the CV and GATE inputs is recorded onto its current pattern, quantised
+to the nearest sixteenth (a key pressed in the second half of a step lands on the next one), with
+the key's length as ties (at least one step; a key held longer than the loop fills it). A note
+written over earlier notes replaces what it covers and cuts the tail of a note it interrupts.
+The selected track also plays the live input through while a key is held, so you hear what you
+record.
+
+| Control | Function |
+|---|---|
+| BPM | the internal clock, 30 to 300, default 127; ignored while CLOCK is connected |
+| CLOCK, RESET | external clock, one pulse per sixteenth, and a reset to bar 1 (the next pulse plays step 1); the period is measured so recording still quantises |
+| PLAY | start (from bar 1) / stop; stopping also stops recording and closes the gates |
+| REC | record on the selected track; starts the transport if it is stopped |
+| CLEAR | clear the selected track's current pattern |
+| SEL (per track) | select the track; the lane shows the pattern and the play head, click it to select too |
+| A/B (per track) | which pattern the track plays, switched at once; lit for B |
+| SET < > | one of ten sets of seven tracks; the A/B choice is part of the set |
+| CV, GATE in | what to record |
+| PLAY, REC, CLEAR in | triggers for the same three buttons, for MIDI or CV control |
+| CV, GATE out × 7 | one pair per track; a new note right after another gets a 1 ms gate gap |
+
+Keyboard: while the mouse is over the module or after clicking it, Space starts and stops, Enter
+records, Shift+Backspace (or Shift+Delete) clears, Up/Down select the track, Tab switches the
+selected track's A/B, Left/Right change the set. These keys are outside Rack's computer-keyboard
+MIDI map (letters, digits, brackets, punctuation), so that keyboard keeps playing notes, and
+outside Rack's own module shortcuts (a plain Backspace still deletes the module). Everything is
+saved in the patch: the sets, the A/B choices, the selected set and track. The transport starts
+stopped.
+
 ## Build
 
 ```
@@ -127,6 +160,7 @@ make install        # copies it into ~/.local/share/Rack2/plugins-lin-x64/
 make -C test check    # dsp/hchip.cpp against test/expected/vectors.txt, the recipes, and the measured responses
 make -C test ds10     # the DS10 drive formula
 make -C test gchip    # the G-chip interpolator against the spec's vectors, the voice, the WAV reader
+make -C test minty    # the sequencer core: quantised recording, ties, playback, clocks
 make -C test smoke    # the Rack module headless against the SDK's libRack.so (16 channels, every type, cost)
 ```
 
@@ -144,15 +178,18 @@ src/plugin.cpp, plugin.hpp   plugin entry
 src/HChipFilter.cpp          the filter module: voices, controls, display, context menu
 src/DS10Drive.cpp            the drive module
 src/GChip.cpp                the sampler module: loading, voices, waveform display
+src/MintySeq.cpp             the recorder module: I/O, buttons, keys, displays, patch storage
 src/widgets.hpp              runtime panel labels shared by the modules
 res/*.svg                    the panel graphics (labels are drawn at runtime)
 dsp/hchip.hpp, hchip.cpp     the chip model
 dsp/ds10_drive.hpp           the drive formula
 dsp/gchip.hpp, gchip.cpp     the G-chip interpolator and playback voice; gchip_proto.inc is Table 1
 dsp/wav.hpp, wav.cpp         RIFF/WAVE reader (PCM 8/16/24/32, float, smpl loop)
+dsp/mintyseq.hpp             the recorder core: sets, patterns, quantised recording, clocks
 dsp/emu_filters.hpp, .cpp    the EOS filter recipes
 test/hchip_test.cpp          DSP tests; test/expected/vectors.txt the reference vectors
 test/ds10_test.cpp           drive formula test
 test/gchip_test.cpp          interpolator, voice and WAV reader tests
+test/mintyseq_test.cpp       recorder core tests
 test/smoke/smoke.cpp         headless module test
 ```
