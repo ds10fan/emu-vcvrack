@@ -74,6 +74,13 @@ public:
     // Per-track playback state after the last step.
     float trackCv(int t) const { return cv_[t]; }
     bool trackGate(int t) const { return gate_[t]; }
+    // True once per step boundary (including step 0 at start), with the step that just began.
+    bool takeStepEvent(int& step) {
+        if (!stepEvent_) return false;
+        stepEvent_ = false;
+        step = pos_;
+        return true;
+    }
     // Set at a step where a new note starts while the gate was already high; the caller clears
     // it after producing the gap.
     bool takeRetrigger(int t) {
@@ -227,6 +234,7 @@ private:
             pos_ = (pos_ + 1) % kSteps;
             if (recActive_) recSteps_++;
         }
+        stepEvent_ = true;
         for (int t = 0; t < kTracks; t++) {
             const Step& s = playingPattern(t).steps[pos_];
             if (s.gate) {
@@ -244,6 +252,7 @@ private:
     int pos_ = 0;
     double phase_ = 0.0;
     bool pendingFirst_ = true;
+    bool stepEvent_ = false;
     double extElapsed_ = 0.0, extPeriod_ = 0.0;
     float cv_[kTracks] = {0, 0, 0, 0, 0, 0, 0};
     bool gate_[kTracks] = {false, false, false, false, false, false, false};

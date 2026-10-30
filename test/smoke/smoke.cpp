@@ -182,6 +182,27 @@ static int smokeMintySeq() {
     bool play6 = m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f;
     std::printf("minty: playback step 4 %d, step 6 silent %d\n", play4, play6);
     if (!play4 || !play6) fails++;
+    // click: a burst right after a beat (step 8), silence just before the next beat (step 12),
+    // the bar click (step 0) louder than a beat click
+    auto clickPeak = [&](int samples) {
+        float pk = 0.f;
+        for (int i = 0; i < samples; i++) {
+            m.process(args);
+            pk = std::max(pk, std::fabs(m.outputs[MintySeq::CLICK_OUTPUT].getVoltage()));
+        }
+        return pk;
+    };
+    advanceTo(8);
+    float beatPeak = clickPeak(200);
+    advanceTo(11);
+    for (int i = 0; i < 5000; i++) m.process(args);
+    float quietPeak = clickPeak(100);
+    advanceTo(0);
+    float barPeak = clickPeak(200);
+    advanceTo(1);
+    float offBeat = clickPeak(200);
+    std::printf("minty: click beat %.2f V, before next beat %.3f V, bar %.2f V, off-beat step %.3f V\n", beatPeak, quietPeak, barPeak, offBeat);
+    if (!(beatPeak > 0.5f && quietPeak < 0.05f && barPeak > beatPeak && offBeat < 0.05f)) fails++;
     // A/B: B is empty
     press(MintySeq::AB_PARAM);
     advanceTo(4);

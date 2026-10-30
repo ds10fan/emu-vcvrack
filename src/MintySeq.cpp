@@ -23,7 +23,7 @@ struct MintySeq : Module {
         PARAMS_LEN
     };
     enum InputId { CV_INPUT, GATE_INPUT, CLOCK_INPUT, RESET_INPUT, PLAY_INPUT, REC_INPUT, CLEAR_INPUT, INPUTS_LEN };
-    enum OutputId { ENUMS(CV_OUTPUT, minty::kTracks), ENUMS(GATE_OUTPUT, minty::kTracks), OUTPUTS_LEN };
+    enum OutputId { ENUMS(CV_OUTPUT, minty::kTracks), ENUMS(GATE_OUTPUT, minty::kTracks), CLICK_OUTPUT, OUTPUTS_LEN };
     enum LightId { PLAY_LIGHT, REC_LIGHT, ENUMS(SEL_LIGHT, minty::kTracks), ENUMS(AB_LIGHT, minty::kTracks), LIGHTS_LEN };
 
     // Requests from the UI thread (keyboard), consumed in process().
@@ -46,6 +46,23 @@ struct MintySeq : Module {
     float gapTimer[minty::kTracks] = {0, 0, 0, 0, 0, 0, 0};
     bool liveGate = false;
     dsp::ClockDivider lightDivider;
+
+    // Metronome click: white noise through a high-pass with an exponential decay, on every beat,
+    // louder and longer on the first beat of a bar.
+    uint32_t noiseState = 0x9E3779B9u;
+    float clickEnv = 0.f, clickDecay = 0.f;
+    float hp1In = 0.f, hp1Out = 0.f, hp2In = 0.f, hp2Out = 0.f;
+    static constexpr float kClickHpHz = 2000.f;
+    static constexpr float kClickBeatMs = 12.f, kClickBarMs = 25.f;
+    static constexpr float kClickBeatLevel = 0.6f, kClickBarLevel = 1.f;
+    static constexpr float kClickVolts = 5.f;
+
+    float whiteNoise() {
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        return float(int32_t(noiseState)) / 2147483648.f;
+    }
 
     MintySeq() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -71,6 +88,7 @@ struct MintySeq : Module {
         configInput(PLAY_INPUT, "Start / stop trigger");
         configInput(REC_INPUT, "Record trigger");
         configInput(CLEAR_INPUT, "Clear trigger");
+        configOutput(CLICK_OUTPUT, "Metronome click (audio), accented on bar 1");
         configLight(PLAY_LIGHT, "Running");
         configLight(REC_LIGHT, "Recording");
         lightDivider.setDivision(32);
@@ -145,6 +163,30 @@ struct MintySeq : Module {
             outputs[CV_OUTPUT + t].setVoltage(cv);
             outputs[GATE_OUTPUT + t].setVoltage(g ? 10.f : 0.f);
         }
+
+        // click
+        int stepIndex;
+        if (seq.takeStepEvent(stepIndex) && stepIndex % 4 == 0) {
+            const bool bar = stepIndex == 0;
+            clickEnv = bar ? kClickBarLevel : kClickBeatLevel;
+            const float ms = bar ? kClickBarMs : kClickBeatMs;
+            clickDecay = std::exp(-1.f / (ms * 1e-3f * args.sampleRate));
+        }
+        float click = 0.f;
+        if (clickEnv > 1e-4f) {
+            // two one-pole high-passes
+            const float a = std::exp(-2.f * float(M_PI) * kClickHpHz * args.sampleTime);
+            float x = whiteNoise();
+            hp1Out = a * (hp1Out + x - hp1In);
+            hp1In = x;
+            hp2Out = a * (hp2Out + hp1Out - hp2In);
+            hp2In = hp1Out;
+            click = hp2Out * clickEnv * kClickVolts;
+            clickEnv *= clickDecay;
+        } else {
+            clickEnv = 0.f;
+        }
+        outputs[CLICK_OUTPUT].setVoltage(click);
 
         if (lightDivider.process()) {
             lights[PLAY_LIGHT].setBrightness(seq.running ? 1.f : 0.f);
@@ -371,6 +413,7 @@ struct MintySeqWidget : ModuleWidget {
             {Vec(40.f, 110.2f), "PLAY", 7.f, true, kPanelLight},
             {Vec(53.f, 110.2f), "REC", 7.f, true, kPanelLight},
             {Vec(66.f, 110.2f), "CLEAR", 7.f, true, kPanelLight},
+            {Vec(100.f, 110.2f), "CLICK", 7.f, true, kPanelLight},
         };
         addChild(labels);
 
@@ -411,6 +454,7 @@ struct MintySeqWidget : ModuleWidget {
         addInput(createInputCentered<PJ301MPort>(mm2px(Vec(40.f, 116.5f)), module, MintySeq::PLAY_INPUT));
         addInput(createInputCentered<PJ301MPort>(mm2px(Vec(53.f, 116.5f)), module, MintySeq::REC_INPUT));
         addInput(createInputCentered<PJ301MPort>(mm2px(Vec(66.f, 116.5f)), module, MintySeq::CLEAR_INPUT));
+        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(100.f, 116.5f)), module, MintySeq::CLICK_OUTPUT));
     }
 
     // Keyboard shortcuts, while the mouse is over the module or after it was clicked. Keys are

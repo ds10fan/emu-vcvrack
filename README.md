@@ -133,6 +133,7 @@ record.
 | CV, GATE in | what to record |
 | PLAY, REC, CLEAR in | triggers for the same three buttons, for MIDI or CV control |
 | CV, GATE out × 7 | one pair per track; a new note right after another gets a 1 ms gate gap |
+| CLICK out | a metronome click (audio): white noise through a 2 kHz high-pass with an exponential decay, on every beat, louder and longer on the first beat of a bar |
 
 Keyboard: while the mouse is over the module or after clicking it, Space starts and stops, Enter
 records, Shift+Backspace (or Shift+Delete) clears, Up/Down select the track, Tab switches the
