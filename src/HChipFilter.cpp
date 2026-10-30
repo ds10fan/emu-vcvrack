@@ -75,6 +75,7 @@ struct HChipFilter : Module {
     int multInBits = 16;      // LATCH 18: 16, 17 or 18 bits
     int productRound = 0;     // 0 floor, 1 nearest
     bool accSaturate = false;
+    int accBits = 20;         // ADDER 12, ACC 10/11, LATCH 38: 20 or 24 bits
     hchip::Params applied;
 
     // What channel 0 is doing, for the display.
@@ -160,6 +161,7 @@ struct HChipFilter : Module {
         p.multInBits = clamp(multInBits, 16, 18);
         p.productRound = productRound ? hchip::Rounding::Nearest : hchip::Rounding::Floor;
         p.accSaturate = accSaturate;
+        p.accBits = accBits == 24 ? 24 : 20;
         return p;
     }
 
@@ -171,7 +173,7 @@ struct HChipFilter : Module {
     bool widthsChanged() const {
         hchip::Params p = widthParams();
         return p.multInBits != applied.multInBits || p.productRound != applied.productRound ||
-               p.accSaturate != applied.accSaturate;
+               p.accSaturate != applied.accSaturate || p.accBits != applied.accBits;
     }
 
     void onReset() override {
@@ -215,7 +217,9 @@ struct HChipFilter : Module {
             v.setX((uint16_t)std::lround(cutoff * (65535.f / 255.f)));
 
             float in = inputs[IN_INPUT].getPolyVoltage(c) * inScale;
-            int64_t x = (int64_t)std::lround(clamp(in, -8388607.f, 8388607.f));
+            // the input bus is as wide as the accumulator: clamp to its range
+            const float inMax = float((int64_t(1) << (applied.accBits - 1)) - 1);
+            int64_t x = (int64_t)std::lround(clamp(in, -inMax, inMax));
             int64_t y = v.process(x);
             outputs[OUT_OUTPUT].setVoltage((float)y * outScale, c);
 
@@ -245,6 +249,7 @@ struct HChipFilter : Module {
         json_object_set_new(root, "multInBits", json_integer(multInBits));
         json_object_set_new(root, "productRound", json_integer(productRound));
         json_object_set_new(root, "accSaturate", json_boolean(accSaturate));
+        json_object_set_new(root, "accBits", json_integer(accBits));
         return root;
     }
 
@@ -252,6 +257,9 @@ struct HChipFilter : Module {
         if (json_t* j = json_object_get(root, "multInBits")) multInBits = json_integer_value(j);
         if (json_t* j = json_object_get(root, "productRound")) productRound = json_integer_value(j);
         if (json_t* j = json_object_get(root, "accSaturate")) accSaturate = json_boolean_value(j);
+        // Patches saved before the option ran at 24 bits; keep them sounding the same.
+        accBits = 24;
+        if (json_t* j = json_object_get(root, "accBits")) accBits = json_integer_value(j) == 24 ? 24 : 20;
         applyWidths();
     }
 };
@@ -429,6 +437,10 @@ struct HChipFilterWidget : ModuleWidget {
             "Product rounding", {"Floor (arithmetic shift)", "Nearest"},
             [=]() { return module->productRound; },
             [=](int i) { module->productRound = i; }));
+        menu->addChild(createIndexSubmenuItem(
+            "Accumulator width", {"20 bits", "24 bits"},
+            [=]() { return module->accBits == 24 ? 1 : 0; },
+            [=](int i) { module->accBits = i ? 24 : 20; }));
         menu->addChild(createBoolPtrMenuItem("Saturating accumulator", "", &module->accSaturate));
     }
 };

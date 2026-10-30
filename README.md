@@ -27,9 +27,11 @@ The DSP is a C++ port of a Rust cycle-level emulator of the patent and is bit-ex
 
 Widths are the emulator's defaults: 24-bit wrapping accumulator and input, 16-bit saturating
 delay memory, 16-bit saturating multiplier operand, 16-bit coefficient mantissa, floor-truncated
-product. The module's context menu offers the
-alternatives the patent leaves open: a 17- or 18-bit multiplier operand, round-to-nearest
-products, a saturating accumulator.
+product. The module itself defaults to a 20-bit accumulator (the input bus is as wide and
+clamps to it); the bit-exact tests run at 24. The module's context menu offers the
+alternatives the patent leaves open: a 24-bit accumulator, a 17- or 18-bit multiplier operand,
+round-to-nearest products, a saturating accumulator. Patches saved before the accumulator option
+load at 24 bits.
 
 **Not ported:** the interpolator of FIGs. 9 to 12, which moves the interpolating variable x
 toward a destination over 32 to 4096 samples. Here the cutoff control is turned straight into x:
