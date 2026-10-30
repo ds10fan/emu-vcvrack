@@ -1,0 +1,9 @@
+# Rack SDK: unpack Rack-SDK-*.zip into sdk/ (see README.md)
+sdk/
+# Build products
+build/
+dist/
+plugin.so
+plugin.dylib
+plugin.dll
+test/build/

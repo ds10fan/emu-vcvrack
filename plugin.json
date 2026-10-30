@@ -1,0 +1,23 @@
+{
+  "slug": "EmuHChip",
+  "name": "E-mu H-Chip",
+  "version": "2.0.0",
+  "license": "MIT",
+  "brand": "E-mu H-Chip",
+  "author": "ds10fan",
+  "authorEmail": "ds10fan@ibawizard.net",
+  "authorUrl": "",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "sourceUrl": "",
+  "donateUrl": "",
+  "changelogUrl": "",
+  "modules": [
+    {
+      "slug": "HChipFilter",
+      "name": "H-Chip Filter",
+      "description": "Cycle-level model of the Emulator IV filter chip (US 5,170,369) programmed with the EOS stock filter recipes",
+      "tags": ["Filter", "Polyphonic", "Hardware clone"]
+    }
+  ]
+}
