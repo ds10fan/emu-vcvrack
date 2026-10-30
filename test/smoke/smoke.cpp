@@ -331,8 +331,50 @@ static int smokeMidiVerb() {
     return fails;
 }
 
+// Mute and held CV.
+static int smokeMintyMuteHold() {
+    int fails = 0;
+    MintySeq m;
+    Module::ProcessArgs args;
+    args.sampleRate = 48000.f;
+    args.sampleTime = 1.f / 48000.f;
+    m.seq.currentPattern().writeNote(2, 4, 3.f);  // track 1, step 2, one step, 3 V
+    m.process(args);
+    m.seq.start();
+    auto runTo = [&](int step) {
+        for (int i = 0; i < 70 * 5670 && m.seq.pos() == step; i++) m.process(args);
+        for (int i = 0; i < 70 * 5670 && m.seq.pos() != step; i++) m.process(args);
+        for (int i = 0; i < 100; i++) m.process(args);
+    };
+    runTo(2);
+    bool on = m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 10.f && m.outputs[MintySeq::CV_OUTPUT].getVoltage() == 3.f;
+    runTo(5);
+    bool held = m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f && m.outputs[MintySeq::CV_OUTPUT].getVoltage() == 3.f;
+    // a live note on the selected track, released: its CV stays
+    m.inputs[MintySeq::GATE_INPUT].setVoltage(10.f);
+    m.inputs[MintySeq::CV_INPUT].setVoltage(-1.f);
+    for (int i = 0; i < 50; i++) m.process(args);
+    m.inputs[MintySeq::GATE_INPUT].setVoltage(0.f);
+    for (int i = 0; i < 50; i++) m.process(args);
+    bool liveHeld = m.outputs[MintySeq::CV_OUTPUT].getVoltage() == -1.f && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f;
+    // mute: no gate at step 2, CV stays at the held -1 V
+    m.params[MintySeq::MUTE_PARAM].setValue(1.f);
+    m.process(args);
+    m.params[MintySeq::MUTE_PARAM].setValue(0.f);
+    runTo(2);
+    bool muted = m.mute[0] && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 0.f && m.outputs[MintySeq::CV_OUTPUT].getVoltage() == -1.f;
+    m.params[MintySeq::MUTE_PARAM].setValue(1.f);
+    m.process(args);
+    m.params[MintySeq::MUTE_PARAM].setValue(0.f);
+    runTo(2);
+    bool unmuted = !m.mute[0] && m.outputs[MintySeq::GATE_OUTPUT].getVoltage() == 10.f;
+    std::printf("minty: note %d, CV held after note %d, live CV held %d, muted %d, unmuted %d\n", on, held, liveHeld, muted, unmuted);
+    if (!on || !held || !liveHeld || !muted || !unmuted) fails++;
+    return fails;
+}
+
 int main() {
-    int fails = smokeGChip() + smokeMintySeq() + smokeMidiVerb();
+    int fails = smokeGChip() + smokeMintySeq() + smokeMintyMuteHold() + smokeMidiVerb();
     HChipFilter m;
     // 2 Pole Low-pass, Q 0, fully open: flat (the gain word 0xFE, -0.14 dB)
     m.params[HChipFilter::TYPE_PARAM].setValue(0);

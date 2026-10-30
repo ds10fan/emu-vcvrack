@@ -131,10 +131,11 @@ record.
 | CLEAR | clear the selected track's current pattern |
 | SEL (per track) | select the track; the lane shows the pattern and the play head, click it to select too |
 | A/B (per track) | which pattern the track plays, switched at once; lit for B |
+| MUTE (per track) | silences the track's playback (gate low, CV held); the selected track still monitors the live input; saved in the patch |
 | SET < > | one of ten sets of seven tracks; the A/B choice is part of the set |
 | CV, GATE in | what to record |
 | PLAY, REC, CLEAR in | triggers for the same three buttons, for MIDI or CV control |
-| CV, GATE out × 7 | one pair per track; a new note right after another gets a 1 ms gate gap |
+| CV, GATE out × 7 | one pair per track; a new note right after another gets a 1 ms gate gap; the CV holds the last note's value after its gate ends (including a live note) |
 | CLICK out | a metronome click (audio): white noise through a 2 kHz high-pass with an exponential decay, on every beat, louder and longer on the first beat of a bar |
 
 Keyboard: while the mouse is over the module or after clicking it, Space starts and stops, Enter

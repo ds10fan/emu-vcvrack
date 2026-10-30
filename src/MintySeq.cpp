@@ -20,11 +20,12 @@ struct MintySeq : Module {
         SET_NEXT_PARAM,
         ENUMS(SEL_PARAM, minty::kTracks),
         ENUMS(AB_PARAM, minty::kTracks),
+        ENUMS(MUTE_PARAM, minty::kTracks),
         PARAMS_LEN
     };
     enum InputId { CV_INPUT, GATE_INPUT, CLOCK_INPUT, RESET_INPUT, PLAY_INPUT, REC_INPUT, CLEAR_INPUT, INPUTS_LEN };
     enum OutputId { ENUMS(CV_OUTPUT, minty::kTracks), ENUMS(GATE_OUTPUT, minty::kTracks), CLICK_OUTPUT, OUTPUTS_LEN };
-    enum LightId { PLAY_LIGHT, REC_LIGHT, ENUMS(SEL_LIGHT, minty::kTracks), ENUMS(AB_LIGHT, minty::kTracks), LIGHTS_LEN };
+    enum LightId { PLAY_LIGHT, REC_LIGHT, ENUMS(SEL_LIGHT, minty::kTracks), ENUMS(AB_LIGHT, minty::kTracks), ENUMS(MUTE_LIGHT, minty::kTracks), LIGHTS_LEN };
 
     // Requests from the UI thread (keyboard), consumed in process().
     enum Request : uint32_t {
@@ -45,6 +46,11 @@ struct MintySeq : Module {
     dsp::SchmittTrigger gateIn, clockIn, resetIn, playIn, recIn, clearIn;
     float gapTimer[minty::kTracks] = {0, 0, 0, 0, 0, 0, 0};
     bool liveGate = false;
+    // Per-track mute (playback only; the selected track still monitors the live input) and the
+    // CV each output holds: it changes only while a note sounds and stays after the note ends.
+    bool mute[minty::kTracks] = {false, false, false, false, false, false, false};
+    float heldCv[minty::kTracks] = {0, 0, 0, 0, 0, 0, 0};
+    dsp::BooleanTrigger muteBtn[minty::kTracks];
     dsp::ClockDivider lightDivider;
 
     // Metronome click: white noise through a high-pass with an exponential decay, on every beat,
@@ -79,6 +85,8 @@ struct MintySeq : Module {
             configOutput(CV_OUTPUT + t, string::f("Track %d CV", t + 1));
             configOutput(GATE_OUTPUT + t, string::f("Track %d gate", t + 1));
             configLight(SEL_LIGHT + t, string::f("Track %d selected", t + 1));
+            configButton(MUTE_PARAM + t, string::f("Mute track %d", t + 1));
+            configLight(MUTE_LIGHT + t, string::f("Track %d muted", t + 1));
             configLight(AB_LIGHT + t, string::f("Track %d plays pattern B", t + 1));
         }
         configInput(CV_INPUT, "CV to record");
@@ -102,6 +110,10 @@ struct MintySeq : Module {
         seq.currentSet = 0;
         seq.currentTrack = 0;
         liveGate = false;
+        for (int t = 0; t < minty::kTracks; t++) {
+            mute[t] = false;
+            heldCv[t] = 0.f;
+        }
     }
 
     void process(const ProcessArgs& args) override {
@@ -117,6 +129,7 @@ struct MintySeq : Module {
         if (clearIn.process(inputs[CLEAR_INPUT].getVoltage(), 0.1f, 1.f)) r |= REQ_CLEAR;
         for (int t = 0; t < minty::kTracks; t++) {
             if (selBtn[t].process(params[SEL_PARAM + t].getValue() > 0.f)) seq.selectTrack(t);
+            if (muteBtn[t].process(params[MUTE_PARAM + t].getValue() > 0.f)) mute[t] = !mute[t];
             if (abBtn[t].process(params[AB_PARAM + t].getValue() > 0.f)) seq.toggleAB(t);
         }
         int rt = requestTrack.exchange(-1);
@@ -149,18 +162,18 @@ struct MintySeq : Module {
 
         // outputs
         for (int t = 0; t < minty::kTracks; t++) {
-            float cv = seq.trackCv(t);
-            bool g = seq.trackGate(t);
+            bool g = seq.trackGate(t) && !mute[t];
+            if (g) heldCv[t] = seq.trackCv(t);
             if (seq.takeRetrigger(t)) gapTimer[t] = 1e-3f;
             if (gapTimer[t] > 0.f) {
                 gapTimer[t] -= args.sampleTime;
                 g = false;
             }
             if (t == seq.currentTrack && liveGate) {
-                cv = cvIn;
+                heldCv[t] = cvIn;
                 g = true;
             }
-            outputs[CV_OUTPUT + t].setVoltage(cv);
+            outputs[CV_OUTPUT + t].setVoltage(heldCv[t]);
             outputs[GATE_OUTPUT + t].setVoltage(g ? 10.f : 0.f);
         }
 
@@ -193,6 +206,7 @@ struct MintySeq : Module {
             lights[REC_LIGHT].setBrightness(seq.recording ? 1.f : 0.f);
             for (int t = 0; t < minty::kTracks; t++) {
                 lights[SEL_LIGHT + t].setBrightness(t == seq.currentTrack ? 1.f : 0.f);
+                lights[MUTE_LIGHT + t].setBrightness(mute[t] ? 1.f : 0.f);
                 lights[AB_LIGHT + t].setBrightness(seq.ab(t) ? 1.f : 0.f);
             }
         }
@@ -202,6 +216,9 @@ struct MintySeq : Module {
         json_t* root = json_object();
         json_object_set_new(root, "currentSet", json_integer(seq.currentSet));
         json_object_set_new(root, "currentTrack", json_integer(seq.currentTrack));
+        json_t* muteJ = json_array();
+        for (int t = 0; t < minty::kTracks; t++) json_array_append_new(muteJ, json_boolean(mute[t]));
+        json_object_set_new(root, "mute", muteJ);
         json_t* setsJ = json_array();
         for (int s = 0; s < minty::kSets; s++) {
             json_t* setJ = json_object();
@@ -241,6 +258,10 @@ struct MintySeq : Module {
         seq.clearAll();
         if (json_t* j = json_object_get(root, "currentSet")) seq.currentSet = clamp((int)json_integer_value(j), 0, minty::kSets - 1);
         if (json_t* j = json_object_get(root, "currentTrack")) seq.currentTrack = clamp((int)json_integer_value(j), 0, minty::kTracks - 1);
+        for (int t = 0; t < minty::kTracks; t++) mute[t] = false;
+        if (json_t* muteJ = json_object_get(root, "mute"))
+            for (int t = 0; t < minty::kTracks; t++)
+                if (json_t* j = json_array_get(muteJ, t)) mute[t] = json_boolean_value(j);
         json_t* setsJ = json_object_get(root, "sets");
         if (!setsJ) return;
         for (int s = 0; s < minty::kSets; s++) {
@@ -406,6 +427,7 @@ struct MintySeqWidget : ModuleWidget {
             {Vec(102.f, 30.8f), "RESET", 6.f, false, kPanelDark},
             {Vec(9.f, 35.2f), "SEL", 6.f, true, kPanelDark},
             {Vec(19.f, 35.2f), "A/B", 6.f, true, kPanelDark},
+            {Vec(29.f, 35.2f), "MUTE", 6.f, true, kPanelDark},
             {Vec(88.f, 35.2f), "CV", 6.f, true, kPanelDark},
             {Vec(102.f, 35.2f), "GATE", 6.f, true, kPanelDark},
             {Vec(12.f, 99.3f), "PLAY", 6.f, true, kPanelDark},
@@ -438,8 +460,10 @@ struct MintySeqWidget : ModuleWidget {
             addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(9.f, y)), module, MintySeq::SEL_LIGHT + t));
             addParam(createParamCentered<LEDButton>(mm2px(Vec(19.f, y)), module, MintySeq::AB_PARAM + t));
             addChild(createLightCentered<MediumLight<BlueLight>>(mm2px(Vec(19.f, y)), module, MintySeq::AB_LIGHT + t));
-            TrackLane* lane = createWidget<TrackLane>(mm2px(Vec(25.5f, y - 3.4f)));
-            lane->box.size = mm2px(Vec(53.f, 6.8f));
+            addParam(createParamCentered<LEDButton>(mm2px(Vec(29.f, y)), module, MintySeq::MUTE_PARAM + t));
+            addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(29.f, y)), module, MintySeq::MUTE_LIGHT + t));
+            TrackLane* lane = createWidget<TrackLane>(mm2px(Vec(34.5f, y - 3.4f)));
+            lane->box.size = mm2px(Vec(45.f, 6.8f));
             lane->module = module;
             lane->track = t;
             addChild(lane);
