@@ -2,7 +2,7 @@
 RACK_DIR ?= sdk/Rack-SDK
 
 FLAGS += -Idsp
-SOURCES += $(wildcard src/*.cpp) dsp/hchip.cpp dsp/emu_filters.cpp
+SOURCES += $(wildcard src/*.cpp) dsp/hchip.cpp dsp/emu_filters.cpp dsp/gchip.cpp dsp/wav.cpp
 DISTRIBUTABLES += res
 
 include $(RACK_DIR)/plugin.mk

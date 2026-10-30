@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="71.12mm" height="128.5mm" viewBox="0 0 71.12 128.5">
+  <!-- 14 HP panel. Labels are drawn at runtime by the module widget (nanosvg renders no text). -->
+  <rect x="0" y="0" width="71.12" height="128.5" fill="#e4e4e2"/>
+  <!-- title band -->
+  <rect x="0" y="0" width="71.12" height="15.5" fill="#202024"/>
+  <rect x="4" y="15.5" width="63.12" height="0.6" fill="#e0901f"/>
+  <!-- jack band -->
+  <rect x="0" y="107" width="71.12" height="21.5" fill="#202024"/>
+  <!-- control groups -->
+  <rect x="3.5" y="52.5" width="21" height="37" rx="2" fill="#d8d8d6" stroke="#b8b8b6" stroke-width="0.3"/>
+  <rect x="27.5" y="52.5" width="21" height="37" rx="2" fill="#d8d8d6" stroke="#b8b8b6" stroke-width="0.3"/>
+  <rect x="51.5" y="52.5" width="16.12" height="37" rx="2" fill="#d8d8d6" stroke="#b8b8b6" stroke-width="0.3"/>
+</svg>

@@ -2,9 +2,12 @@
 // and checks that the stock lowpass passes a low tone and stops a high one, that polyphony and
 // the type switch work, and reports the cost per sample. Links against the SDK's libRack.so.
 #include <chrono>
+#include <cstring>
+#include <fstream>
 #include <cmath>
 #include <cstdio>
 
+#include "../../src/GChip.cpp"
 #include "../../src/HChipFilter.cpp"
 
 Plugin* pluginInstance = nullptr;
@@ -33,8 +36,105 @@ static double gainDb(HChipFilter& m, float freq, int channels, float amp = 4.f) 
     return 20 * std::log10(std::hypot(re, im) / (amp * n / 2.0));
 }
 
-int main() {
+// A 16-bit mono WAV of a sine with an smpl loop, for the sampler test.
+static std::string writeTestWav() {
+    std::vector<unsigned char> b;
+    auto put16 = [&](unsigned v) { b.push_back(v & 255); b.push_back((v >> 8) & 255); };
+    auto put32 = [&](unsigned v) { for (int i = 0; i < 4; i++) b.push_back((v >> (8 * i)) & 255); };
+    auto tag = [&](const char* t) { b.insert(b.end(), t, t + 4); };
+    const int n = 4800;
+    tag("RIFF"); put32(0); tag("WAVE");
+    tag("fmt "); put32(16); put16(1); put16(1); put32(48000); put32(96000); put16(2); put16(16);
+    tag("smpl"); put32(60); for (int i = 0; i < 7; i++) put32(0); put32(1); put32(0);
+    put32(0); put32(0); put32(1000); put32(1999); put32(0); put32(0);
+    tag("data"); put32(n * 2);
+    for (int i = 0; i < n; i++) put16((unsigned)(uint16_t)(int16_t)std::lround(20000 * std::sin(2 * M_PI * 100.0 * i / 48000.0)));
+    unsigned riff = b.size() - 8;
+    for (int i = 0; i < 4; i++) b[4 + i] = (riff >> (8 * i)) & 255;
+    std::string path = "build/smoke_test.wav";
+    std::ofstream f(path, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(b.data()), b.size());
+    return path;
+}
+
+static int smokeGChip() {
     int fails = 0;
+    std::string path = writeTestWav();
+    GChip g;
+    if (!g.loadSample(path, false)) {
+        std::printf("gchip: load failed: %s\n", g.loadError.c_str());
+        return 1;
+    }
+    Module::ProcessArgs args;
+    args.sampleRate = 48000.f;
+    args.sampleTime = 1.f / 48000.f;
+    g.inputs[GChip::GATE_INPUT].channels = 4;
+    g.outputs[GChip::OUT_OUTPUT].channels = 1;
+    g.outputs[GChip::EOC_OUTPUT].channels = 1;
+    // One-shot at the original pitch: 4800 samples of a 100 Hz sine, then silence and an EOC pulse.
+    // (Rack's SchmittTrigger starts high, so the gate must be seen low once before it can fire.)
+    g.params[GChip::LOOP_MODE_PARAM].setValue(0);
+    for (int c = 0; c < 4; c++) g.inputs[GChip::GATE_INPUT].setVoltage(0.f, c);
+    g.process(args);
+    for (int c = 0; c < 4; c++) g.inputs[GChip::GATE_INPUT].setVoltage(10.f, c);
+    double peak = 0, re = 0, im = 0;
+    int eocs = 0;
+    bool eocHigh = false;
+    for (int i = 0; i < 6000; i++) {
+        g.process(args);
+        float y = g.outputs[GChip::OUT_OUTPUT].getVoltage(3);
+        if (i >= 100 && i < 4420) {  // 4320 samples: exactly 9 periods of 100 Hz at 48 kHz
+            peak = std::max(peak, (double)std::fabs(y));
+            re += y * std::cos(2 * M_PI * 100.0 * (i + 0.5) / 48000.0);
+            im += y * std::sin(2 * M_PI * 100.0 * (i + 0.5) / 48000.0);
+        }
+        if (i >= 4900 && y != 0.f) fails++;
+        bool hi = g.outputs[GChip::EOC_OUTPUT].getVoltage(3) > 5.f;
+        if (hi && !eocHigh) eocs++;
+        eocHigh = hi;
+    }
+    double amp = std::hypot(re, im) / 2160.0;  // (4320 samples) / 2
+    std::printf("gchip one-shot: peak %.3f V, 100 Hz amplitude %.3f V (want 3.052), EOC pulses %d, channels %d\n", peak, amp,
+                eocs, g.outputs[GChip::OUT_OUTPUT].getChannels());
+    if (std::fabs(amp - 20000.0 / 32768.0 * 5.0) > 0.02) fails++;
+    if (eocs != 1) fails++;
+    if (g.outputs[GChip::OUT_OUTPUT].getChannels() != 4) fails++;
+    // Loop On, an octave down: still sounding long after the sample length.
+    g.params[GChip::LOOP_MODE_PARAM].setValue(2);
+    g.params[GChip::LOOP_START_PARAM].setValue(1000.f / 4800.f);
+    g.params[GChip::LOOP_END_PARAM].setValue(2000.f / 4800.f);
+    g.inputs[GChip::VOCT_INPUT].channels = 1;
+    g.inputs[GChip::VOCT_INPUT].setVoltage(-1.f, 0);
+    for (int c = 0; c < 4; c++) g.inputs[GChip::GATE_INPUT].setVoltage(0.f, c);
+    g.process(args);
+    for (int c = 0; c < 4; c++) g.inputs[GChip::GATE_INPUT].setVoltage(10.f, c);
+    peak = 0;
+    for (int i = 0; i < 48000; i++) {
+        g.process(args);
+        if (i > 40000) peak = std::max(peak, (double)std::fabs(g.outputs[GChip::OUT_OUTPUT].getVoltage(0)));
+    }
+    std::printf("gchip loop on, -1 V: peak after 40000 samples %.3f V\n", peak);
+    if (peak < 2.5) fails++;
+    // Gate mode: release, then it must end.
+    g.params[GChip::LOOP_MODE_PARAM].setValue(1);
+    for (int c = 0; c < 4; c++) g.inputs[GChip::GATE_INPUT].setVoltage(0.f, c);
+    g.process(args);
+    for (int c = 0; c < 4; c++) g.inputs[GChip::GATE_INPUT].setVoltage(10.f, c);
+    for (int i = 0; i < 20000; i++) g.process(args);
+    bool stillOn = g.voices[0].active();
+    for (int c = 0; c < 4; c++) g.inputs[GChip::GATE_INPUT].setVoltage(0.f, c);
+    int n = 0;
+    while (g.voices[0].active() && n < 20000) {
+        g.process(args);
+        n++;
+    }
+    std::printf("gchip gate mode: looping while held %d, ended %d samples after release\n", stillOn, n);
+    if (!stillOn || n >= 20000) fails++;
+    return fails;
+}
+
+int main() {
+    int fails = smokeGChip();
     HChipFilter m;
     // 2 Pole Low-pass, Q 0, fully open: flat (the gain word 0xFE, -0.14 dB)
     m.params[HChipFilter::TYPE_PARAM].setValue(0);

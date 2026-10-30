@@ -7,3 +7,5 @@ plugin.so
 plugin.dylib
 plugin.dll
 test/build/
+# agent worktrees
+.claude/

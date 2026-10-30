@@ -31,6 +31,16 @@
         "Distortion",
         "Polyphonic"
       ]
+    },
+    {
+      "slug": "GChip",
+      "name": "G-Chip Sampler",
+      "description": "WAV sample player with the US 5,111,727 (E-mu G-chip) 7-tap, 32-phase interpolator; gate, V/oct, looping",
+      "tags": [
+        "Sampler",
+        "Polyphonic",
+        "Hardware clone"
+      ]
     }
   ]
 }

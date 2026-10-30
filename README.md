@@ -1,6 +1,7 @@
-# emu-vcvrack: the E-mu H-chip filter as a VCV Rack module
+# emu-vcvrack: E-mu chips as VCV Rack modules
 
-A VCV Rack 2 plugin with two modules. **H-Chip Filter** is the digital filter section of E-mu's
+A VCV Rack 2 plugin with three modules: the H-chip filter, the G-chip sample interpolator as a
+sampler, and a small drive. **H-Chip Filter** is the digital filter section of E-mu's
 patent US 5,170,369 (Rossum, "Dynamic digital IIR audio filter"), the filter block of the
 Emulator IV's H-chip, run cycle by cycle, and programmed with the filter recipes of the EOS
 firmware. Thirty of the E4's filter types are available: the stock lowpass, highpass, bandpass,
@@ -68,6 +69,46 @@ out = mix(in, clamp(in * drive * 4, -1, 1), drive),   mix(a, b, t) = a + (b - a)
 per sample (`dsp/ds10_drive.hpp`), with 5 V as the 1.0 of the formula. DRIVE knob 0..100 %,
 CV input with attenuverter (10 V for the full range), drive clamped to 0..1, polyphonic.
 
+## G-Chip Sampler
+
+A WAV sample player whose resampler is the interpolator of US 5,111,727 (Rossum, "Digital
+sampling instrument for digital audio data"), the E-mu G-chip of the Emax II / Emulator III
+generation, implemented from a specification of that interpolator and nothing else:
+
+- one 223-point linear-phase FIR prototype at 32 sub-phases; the symmetric half (112 words plus
+  a zero at address 112) is the coefficient ROM, Table 1 of the patent (`dsp/gchip_proto.inc`,
+  generated from the spec's list);
+- seven taps per output sample on `x[i-2 .. i+4]`, coefficient addresses `|(-80 + 32 n) - f_MS|`,
+  each blended toward the next ROM word by the fine phase, normalised to a sum of 1;
+- a phase accumulator with 32 fraction bits per voice.
+
+`test/gchip_test.cpp` checks the table's checksums and symmetry, the seven coefficient vectors
+and the resampling vector of the spec's section 7 to 1e-9, the sum and symmetry invariants over
+4096 phases, and an alias floor of −77 dB for a sine shifted up by 2^(1/3) (the spec's figure for
+an implementation without the fine blend is −43 dB). The output point of the interpolator is
+`x(i + f + 0.5)`: at phase 0 the taps sit half a sample either side of the centre, as the spec's
+section 5 says and its resampling vector confirms.
+
+| Control | Function |
+|---|---|
+| display | the waveform with start (green) and loop (blue) markers and the play heads; click it to load a WAV. A WAV dropped on the module loads too |
+| TUNE, FINE | ±24 semitones, ±100 cents, added to the V/OCT input; 0 V plays the file at its own rate |
+| START | where a gate starts playback, as a fraction of the file |
+| L.START, L.END, LOOP | loop points as fractions of the file (set from the file's `smpl` chunk when it has one) and the loop mode: OFF plays once, GATE loops while the gate is high and then plays on to the end, ON loops until the next gate |
+| V/OCT, GATE | polyphonic; one voice per channel, retriggered on each rising edge |
+| OUT, EOC | audio (16-bit full scale is 5 V) and a 1 ms trigger when a voice runs off the end |
+
+Context menu: "Fixed-point datapath" switches to the spec's scalar form with 16-bit coefficients
+(unity 2^14), an 8-bit blend weight and a 32-bit accumulator, the widths section 8 of the spec
+measures as the knee; the default computes the same taps in double precision. Both paths play
+the same 16-bit words: files are converted to 16-bit mono on load (channels averaged), and the
+file's sample rate against the engine rate is part of the pitch ratio. A loop is read with
+wrapped addresses, which stands in for the replicated guard samples the spec asks for, so loops
+need no prepared files. The file path is stored in the patch, not the audio.
+
+Not in the spec and not modelled: the filter family of section 12 (only one impulse response is
+published), the volume and mix stages, the four-bank memory timing.
+
 ## Build
 
 ```
@@ -85,6 +126,7 @@ make install        # copies it into ~/.local/share/Rack2/plugins-lin-x64/
 ```
 make -C test check    # dsp/hchip.cpp against test/expected/vectors.txt, the recipes, and the measured responses
 make -C test ds10     # the DS10 drive formula
+make -C test gchip    # the G-chip interpolator against the spec's vectors, the voice, the WAV reader
 make -C test smoke    # the Rack module headless against the SDK's libRack.so (16 channels, every type, cost)
 ```
 
@@ -101,12 +143,16 @@ plugin.json, Makefile        the Rack plugin
 src/plugin.cpp, plugin.hpp   plugin entry
 src/HChipFilter.cpp          the filter module: voices, controls, display, context menu
 src/DS10Drive.cpp            the drive module
+src/GChip.cpp                the sampler module: loading, voices, waveform display
 src/widgets.hpp              runtime panel labels shared by the modules
-res/HChipFilter.svg, DS10Drive.svg   the panel graphics (labels are drawn at runtime)
+res/*.svg                    the panel graphics (labels are drawn at runtime)
 dsp/hchip.hpp, hchip.cpp     the chip model
 dsp/ds10_drive.hpp           the drive formula
+dsp/gchip.hpp, gchip.cpp     the G-chip interpolator and playback voice; gchip_proto.inc is Table 1
+dsp/wav.hpp, wav.cpp         RIFF/WAVE reader (PCM 8/16/24/32, float, smpl loop)
 dsp/emu_filters.hpp, .cpp    the EOS filter recipes
 test/hchip_test.cpp          DSP tests; test/expected/vectors.txt the reference vectors
 test/ds10_test.cpp           drive formula test
+test/gchip_test.cpp          interpolator, voice and WAV reader tests
 test/smoke/smoke.cpp         headless module test
 ```
