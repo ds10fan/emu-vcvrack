@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="223.52mm" height="128.5mm" viewBox="0 0 223.52 128.5">
+  <!-- 44 HP panel. Labels are drawn at runtime by the module widget (nanosvg renders no text). -->
+  <rect x="0" y="0" width="223.52" height="128.5" fill="#e4e4e2"/>
+  <!-- title band -->
+  <rect x="0" y="0" width="223.52" height="13.2" fill="#202024"/>
+  <rect x="3" y="13.2" width="217.52" height="0.5" fill="#e0901f"/>
+  <!-- editor bezel -->
+  <rect x="1.8" y="14.0" width="169.4" height="111.8" rx="1.5" fill="#2a2a2e"/>
+  <!-- parameter groups -->
+  <rect x="173.2" y="16.2" width="47.3" height="15.4" rx="1.5" fill="#d8d8d6" stroke="#b8b8b6" stroke-width="0.3"/>
+  <rect x="173.2" y="33.2" width="47.3" height="15.4" rx="1.5" fill="#d8d8d6" stroke="#b8b8b6" stroke-width="0.3"/>
+  <rect x="173.2" y="50.2" width="47.3" height="15.4" rx="1.5" fill="#d8d8d6" stroke="#b8b8b6" stroke-width="0.3"/>
+  <rect x="173.2" y="67.2" width="47.3" height="15.4" rx="1.5" fill="#d8d8d6" stroke="#b8b8b6" stroke-width="0.3"/>
+  <!-- output band -->
+  <rect x="172.4" y="104.5" width="51.12" height="24" fill="#202024"/>
+</svg>

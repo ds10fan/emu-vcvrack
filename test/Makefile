@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++11 -O2 -Wall -Wextra
 DSP := ../dsp/hchip.cpp ../dsp/emu_filters.cpp
 HDR := ../dsp/hchip.hpp ../dsp/emu_filters.hpp
 
-all: check ds10 gchip minty midiverb
+all: check ds10 gchip minty midiverb fscript
 
 build/hchip_test: hchip_test.cpp $(DSP) $(HDR)
 	@mkdir -p build
@@ -46,10 +46,17 @@ midiverb: build/midiverb_test
 midiverb-vectors:
 	node midiverb_ref.js $(MIDIVERB_HTML) ../roms > expected/midiverb.txt
 
+build/fscript_test: fscript_test.cpp ../dsp/fscript.cpp ../dsp/fscript.hpp ../dsp/filterlab_presets.cpp ../dsp/filterlab_presets.hpp ../dsp/oversampler.hpp
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ fscript_test.cpp ../dsp/fscript.cpp ../dsp/filterlab_presets.cpp
+
+fscript: build/fscript_test
+	./build/fscript_test
+
 clean:
 	rm -rf build
 
-.PHONY: all check ds10 gchip minty midiverb midiverb-vectors clean
+.PHONY: all check ds10 gchip minty midiverb fscript midiverb-vectors clean
 
 # Headless test of the Rack module against the SDK's libRack.so (needs ../sdk/Rack-SDK)
 RACK_DIR ?= ../sdk/Rack-SDK

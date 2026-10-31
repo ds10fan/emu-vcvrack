@@ -8,8 +8,9 @@ saturation points mostly guessed).
 
 <br>
 
-A VCV Rack 2 plugin with five modules: the H-chip filter, the G-chip sample interpolator as a
-sampler, a small drive, a 7-track CV/gate recorder, and the Alesis MIDIverb ROM emulator. **H-Chip Filter** is the digital filter section of E-mu's
+A VCV Rack 2 plugin with six modules: the H-chip filter, the G-chip sample interpolator as a
+sampler, a small drive, a 7-track CV/gate recorder, the Alesis MIDIverb ROM emulator, and Filter
+Lab, a filter you program in an editor on the panel. **H-Chip Filter** is the digital filter section of E-mu's
 patent US 5,170,369 (Rossum, "Dynamic digital IIR audio filter"), the filter block of the
 Emulator IV's H-chip, run cycle by cycle, and programmed with the filter recipes of the EOS
 firmware. Thirty of the E4's filter types are available: the stock lowpass, highpass, bandpass,
@@ -209,6 +210,95 @@ make -C test midiverb                                             # then compare
 `dsp/midiverb.cpp` is compiled without the SDK's `-funsafe-math-optimizations` (and without
 contracted multiply-adds), so the plugin computes the same doubles as the test.
 
+## Filter Lab
+
+A 44 HP module with a code editor on the panel: write a filter in a small per-sample language
+(fscript, `dsp/fscript.*`), and it compiles as you type and replaces the running filter without a
+dropout (state variables with the same name carry over). Switch between models with the display
+at the top: twelve factory models and any you add.
+
+| Factory model | What it is |
+|---|---|
+| TPT SVF | Zavalishin / Cytomic trapezoidal SVF, LP > BP > HP morph, notch on OUT2, input drive |
+| Moog Ladder | Huovilainen's nonlinear ladder, tanh per stage, 2× internal |
+| ZDF Ladder | four TPT one-poles with the feedback loop solved, tanh at the loop input, bass compensation |
+| Korg35 | Pirkle's virtual analog MS-20 lowpass, saturating loop |
+| Chamberlin SVF | the 1985 digital SVF, 4× internal, soft-limited band path |
+| RBJ Biquad | cookbook LP / HP / BP / notch / peaking EQ |
+| Butterworth 24 | 4th order LP/HP from two biquads |
+| One-Pole | the simplest TPT LP/HP, a starting point |
+| Comb | feedback comb tuned as a pitch, ± feedback, damping |
+| Formant | three bandpasses on vowel formants, A-E-I-O-U morph |
+| Phaser | six allpasses swept by an LFO, feedback |
+| Template | the language reference as comments |
+
+| Control | Function |
+|---|---|
+| display | `<` / `>` step through the models, the name opens the list, the wheel scrolls; `*` marks an edited factory model, `[...]` a user model |
+| editor | the current model's code; the status line shows the compile error (the line is marked red) or `ok`, the op count and the oversampling |
+| P1..P4, attenuverter, CV | `p1..p4` in the script: knob + CV × amount / 10 V, clamped to 0..1 and smoothed (2 ms). With `hz(p)` a full CV amount is 1 V/oct. The labels come from the script's `#p1`..`#p4` lines; the raw CV is also `cv1..cv4` |
+| IN, IN2 | `in`, `in2`; 5 V is 1.0 |
+| OUT, OUT2 | `out`, `out2`; 1.0 is 5 V, clamped to ±12 V. Labels from `#out`, `#out2` |
+| ERR | the code does not compile (the last good version keeps running) |
+| RESET | a voice produced NaN or infinity and was reset, or a loop ran past its budget |
+
+Polyphonic: one voice of state per channel, up to 16, the channel count being the largest of the
+inputs'. Context menu: model list, new model from the template, duplicate as a new model, revert
+to factory code, delete a user model, load/save a model as a `.fs` text file (default folder
+`<Rack user folder>/FilterLab`), reset state, oversampling (off, 2×, 4×, 8×; the script then sees
+the oversampled `sr`), compile as you type (off: Ctrl+Enter), editor font size. Edited factory
+models and user models are saved in the patch.
+
+Editor keys: arrows, Home (first non-blank, then column 0), End, PgUp/PgDn, Ctrl+Home/End, Shift
+to select, double-click selects a word, Tab / Shift+Tab indent (the selected lines), Enter keeps
+the indent (and adds one after `{`), Ctrl+/ toggles comments, Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z)
+undo / redo, Ctrl+C/X/V/A, Ctrl+Enter compile, Esc leaves the editor. While the editor has the
+keyboard, Rack's shortcuts and the computer-keyboard MIDI are off.
+
+### fscript
+
+```
+#name One-Pole LP/HP          // header lines label the panel: #name #p1..#p4 #in2 #out #out2
+#p1 Cutoff
+g = warp(hz(p1))              // every variable is per-voice state: kept between samples, starts at 0
+v = (in - s) * g / (1 + g)
+lp = v + s
+s = lp + v
+out = lp
+out2 = in - lp
+```
+
+The script runs once per sample per channel (or `factor` times with oversampling).
+
+- **Inputs** (read only): `in`, `in2`, `p1..p4`, `cv1..cv4` (volts), `sr`, `dt` (= 1/sr), `ch`
+  (channel index). **Outputs**: `out`, `out2`. **Constants**: `pi`, `tau`, `e`.
+- **Statements**: `x = expr` (also `+= -= *= /=`; semicolons optional), `if c { } else if c { } else { }`
+  (braces optional for a single statement), `for i in a..b { }` (b excluded), `init { }` (runs on
+  reset: load, edit of init values, sample rate or oversampling change).
+- **Declarations** (top level): `buf d[4096]` a per-voice array (indices wrap, so `d[w - n]` is a
+  delay line), `buf t = [1, 2, 3]` a table, `const n = 4` (folded at compile time),
+  `fn sat(x, k) = tanh(x * k) / k` (single-expression functions, inlined).
+- **Operators**: `+ - * / % ^` (`%` floored, `^` power, right associative), `< <= > >= == !=`,
+  `&& || !`, `c ? a : b`.
+- **Functions**: `sin cos tan asin acos atan sinh cosh tanh exp log log2 log10 sqrt abs sign floor
+  ceil round fract pow atan2 min max clamp(x, lo, hi) mix(a, b, t) step(edge, x)`, and for
+  filters `hz(p)` = 20 × 1000^p (0..1 to 20 Hz..20 kHz, 0.1 per octave), `warp(f)` = tan(π f / sr)
+  with f clamped below 0.49 sr (the TPT integrator gain), `mtof(n)`, `vtof(v)` (0 V = C4),
+  `db(x)`, `clip(x)`, `soft(x)` (cubic soft clip), `noise()` (uniform −1..1),
+  `tap(buf, pos)` (linear interpolated, wrapping read), `len(buf)`.
+
+On a live edit the new program starts from the old voices' values for every variable or buffer
+of the same name and size, except variables assigned in `init` and table buffers, which take
+their new values; "Reset filter state" starts everything from zero. Loops are limited to 65536
+iterations per sample; a runaway loop lights RESET and outputs silence instead of hanging the
+engine.
+
+The compiler (`dsp/fscript.cpp`) parses to a syntax tree, folds constants and emits bytecode for
+a stack machine over one flat array of doubles per voice; nothing is allocated on the audio
+thread. Compilation runs on the UI thread, the compiled program and its prepared voices are
+handed to the audio thread through an atomic pointer. Cost at 48 kHz per voice: 0.3 % of a core
+for the one-pole, 1.2 to 3.8 % for the ladders, SVFs and the formant bank (x86-64, `-O3`).
+
 ## Build
 
 ```
@@ -229,6 +319,7 @@ make -C test ds10     # the DS10 drive formula
 make -C test gchip    # the G-chip interpolator against the spec's vectors, the voice, the WAV reader
 make -C test minty    # the sequencer core: quantised recording, ties, playback, clocks
 make -C test midiverb # the MidiVerb port: tables, all programs, and the JavaScript vectors if present
+make -C test fscript  # the Filter Lab language, every factory model (stability, responses), the oversampler
 make -C test smoke    # the Rack module headless against the SDK's libRack.so (16 channels, every type, cost)
 ```
 
@@ -248,6 +339,7 @@ src/DS10Drive.cpp            the drive module
 src/GChip.cpp                the sampler module: loading, voices, waveform display
 src/MintySeq.cpp             the recorder module: I/O, buttons, keys, displays, patch storage
 src/MidiVerb.cpp             the MidiVerb module: program display and menu, mix, feedback
+src/FilterLab.cpp            the Filter Lab module: code editor, model selector, voices, patch storage
 src/widgets.hpp              runtime panel labels shared by the modules
 res/*.svg                    the panel graphics (labels are drawn at runtime)
 dsp/hchip.hpp, hchip.cpp     the chip model
@@ -258,10 +350,14 @@ dsp/mintyseq.hpp             the recorder core: sets, patterns, quantised record
 dsp/midiverb.hpp, .cpp       the MidiVerb port; midiverb_roms.inc the ROMs (tools/gen_midiverb_roms.py)
 roms/                        the MIDIVerb, MIDIFex and MIDIVerb 2 ROM images
 dsp/emu_filters.hpp, .cpp    the EOS filter recipes
+dsp/fscript.hpp, .cpp        the Filter Lab language: lexer, parser, compiler, bytecode VM
+dsp/filterlab_presets.cpp    the factory filter models, in fscript
+dsp/oversampler.hpp          polyphase windowed-sinc up/downsampler (1, 2, 4, 8x)
 test/hchip_test.cpp          DSP tests; test/expected/vectors.txt the reference vectors
 test/ds10_test.cpp           drive formula test
 test/gchip_test.cpp          interpolator, voice and WAV reader tests
 test/mintyseq_test.cpp       recorder core tests
 test/midiverb_test.cpp       MidiVerb tests; test/midiverb_ref.js writes the JavaScript reference
+test/fscript_test.cpp        language, factory model and oversampler tests
 test/smoke/smoke.cpp         headless module test
 ```

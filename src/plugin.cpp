@@ -9,4 +9,5 @@ void init(Plugin* p) {
     p->addModel(modelGChip);
     p->addModel(modelMintySeq);
     p->addModel(modelMidiVerb);
+    p->addModel(modelFilterLab);
 }

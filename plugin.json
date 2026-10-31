@@ -62,6 +62,15 @@
         "Effect",
         "Hardware clone"
       ]
+    },
+    {
+      "slug": "FilterLab",
+      "name": "Filter Lab",
+      "description": "Write filters in a small DSP language in an editor on the panel, compiled as you type; switch between a dozen factory models (SVF, ladders, Korg35, biquads, comb, formant, phaser) and your own",
+      "tags": [
+        "Filter",
+        "Polyphonic"
+      ]
     }
   ]
 }
