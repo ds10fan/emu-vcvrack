@@ -40,8 +40,33 @@ struct FilterLab : Module {
         ATT1_PARAM, ATT2_PARAM, ATT3_PARAM, ATT4_PARAM,
         PARAMS_LEN
     };
-    enum InputId { IN_INPUT, IN2_INPUT, CV1_INPUT, CV2_INPUT, CV3_INPUT, CV4_INPUT, INPUTS_LEN };
-    enum OutputId { OUT_OUTPUT, OUT2_OUTPUT, OUTPUTS_LEN };
+    // IN3/IN4 come after the CV inputs so the ids of the original jacks stay put in saved patches.
+    enum InputId { IN_INPUT, IN2_INPUT, CV1_INPUT, CV2_INPUT, CV3_INPUT, CV4_INPUT, IN3_INPUT, IN4_INPUT, INPUTS_LEN };
+    enum OutputId { OUT_OUTPUT, OUT2_OUTPUT, OUT3_OUTPUT, OUT4_OUTPUT, OUTPUTS_LEN };
+
+    static constexpr int kAudioIns = 4;
+    static constexpr int kAudioOuts = 4;
+    static int audioIn(int i) {
+        static const int ids[kAudioIns] = {IN_INPUT, IN2_INPUT, IN3_INPUT, IN4_INPUT};
+        return ids[i];
+    }
+    // Default jack captions and the script name of each jack.
+    static const char* inCaption(int i) {
+        static const char* const s[kAudioIns] = {"IN1", "IN2", "IN3", "IN4"};
+        return s[i];
+    }
+    static const char* outCaption(int i) {
+        static const char* const s[kAudioOuts] = {"OUT1", "OUT2", "OUT3", "OUT4"};
+        return s[i];
+    }
+    static const char* inVar(int i) {
+        static const char* const s[kAudioIns] = {"in", "in2", "in3", "in4"};
+        return s[i];
+    }
+    static const char* outVar(int i) {
+        static const char* const s[kAudioOuts] = {"out", "out2", "out3", "out4"};
+        return s[i];
+    }
     enum LightId { ERROR_LIGHT, RESET_LIGHT, LIGHTS_LEN };
 
     static constexpr float kFullScale = 5.f;
@@ -53,7 +78,7 @@ struct FilterLab : Module {
     std::atomic<bool> resetRequest{false};
     std::atomic<int> osRequest{0};
     int osFactor = 1;
-    filterlab::Oversampler osIn[kMaxVoices], osIn2[kMaxVoices], osOut[kMaxVoices], osOut2[kMaxVoices];
+    filterlab::Oversampler osIn[kAudioIns][kMaxVoices], osOut[kAudioOuts][kMaxVoices];
     float pSmooth[kMaxVoices][4] = {};
     float resetLightTime = 0.f;
     std::atomic<int> resetCount{0};
@@ -69,8 +94,8 @@ struct FilterLab : Module {
     std::atomic<bool> compileOk{false};
     fscript::Error error;
     std::string labels[4];
-    std::string inLabels[2] = {"IN", "IN2"};
-    std::string outLabels[2] = {"OUT", "OUT2"};
+    std::string inLabels[kAudioIns];    // from #in..#in4, empty if the script names none
+    std::string outLabels[kAudioOuts];  // from #out..#out4
     int instructionCount = 0;
 
     FilterLab() {
@@ -80,10 +105,8 @@ struct FilterLab : Module {
             configParam(ATT1_PARAM + i, -1.f, 1.f, 0.f, string::f("P%d CV amount", i + 1), "%", 0.f, 100.f);
             configInput(CV1_INPUT + i, string::f("P%d CV (10 V for the full range; also cv%d in the script)", i + 1, i + 1));
         }
-        configInput(IN_INPUT, "Audio (in)");
-        configInput(IN2_INPUT, "Audio 2 (in2)");
-        configOutput(OUT_OUTPUT, "Audio (out)");
-        configOutput(OUT2_OUTPUT, "Audio 2 (out2)");
+        for (int i = 0; i < kAudioIns; i++) configInput(audioIn(i), string::f("In %d (%s)", i + 1, inVar(i)));
+        for (int i = 0; i < kAudioOuts; i++) configOutput(i, string::f("Out %d (%s)", i + 1, outVar(i)));
         configLight(ERROR_LIGHT, "Compile error");
         configLight(RESET_LIGHT, "Voice reset (the filter blew up: NaN or infinity) or loop budget exceeded");
         configBypass(IN_INPUT, OUT_OUTPUT);
@@ -135,12 +158,16 @@ struct FilterLab : Module {
             paramQuantities[P1_PARAM + i]->name =
                 labels[i].empty() ? string::f("P%d", i + 1) : string::f("P%d: %s", i + 1, labels[i].c_str());
         }
-        inLabels[1] = b->prog.in2Label.empty() ? "IN2" : b->prog.in2Label;
-        outLabels[0] = b->prog.outLabel.empty() ? "OUT" : b->prog.outLabel;
-        outLabels[1] = b->prog.out2Label.empty() ? "OUT2" : b->prog.out2Label;
-        inputInfos[IN2_INPUT]->name = "Audio 2 (in2)" + (b->prog.in2Label.empty() ? "" : ": " + b->prog.in2Label);
-        outputInfos[OUT_OUTPUT]->name = "Audio (out)" + (b->prog.outLabel.empty() ? "" : ": " + b->prog.outLabel);
-        outputInfos[OUT2_OUTPUT]->name = "Audio 2 (out2)" + (b->prog.out2Label.empty() ? "" : ": " + b->prog.out2Label);
+        for (int i = 0; i < kAudioIns; i++) {
+            inLabels[i] = b->prog.inLabel[i];
+            inputInfos[audioIn(i)]->name =
+                string::f("In %d (%s)", i + 1, inVar(i)) + (inLabels[i].empty() ? "" : ": " + inLabels[i]);
+        }
+        for (int i = 0; i < kAudioOuts; i++) {
+            outLabels[i] = b->prog.outLabel[i];
+            outputInfos[i]->name =
+                string::f("Out %d (%s)", i + 1, outVar(i)) + (outLabels[i].empty() ? "" : ": " + outLabels[i]);
+        }
         if (entry().factory < 0 && !b->prog.name.empty()) entry().name = b->prog.name;
 
         // Reset the voices here (memory may be large); the audio thread redoes it if the rate moved.
@@ -285,10 +312,8 @@ struct FilterLab : Module {
         if (int f = osRequest.exchange(0)) {
             osFactor = f;
             for (int c = 0; c < kMaxVoices; c++) {
-                osIn[c].setFactor(f);
-                osIn2[c].setFactor(f);
-                osOut[c].setFactor(f);
-                osOut2[c].setFactor(f);
+                for (int i = 0; i < kAudioIns; i++) osIn[i][c].setFactor(f);
+                for (int i = 0; i < kAudioOuts; i++) osOut[i][c].setFactor(f);
             }
             resetRequest = true;
         }
@@ -314,8 +339,9 @@ struct FilterLab : Module {
 
         const float smooth = 1.f - std::exp(-1.f / (0.002f * args.sampleRate));
         bool blew = false;
+        const int F = filterlab::Oversampler::kMaxFactor;
         for (int c = 0; c < channels; c++) {
-            float o = 0.f, o2 = 0.f;
+            float o[kAudioOuts] = {};
             if (cur) {
                 fscript::Voice& v = cur->voices[c];
                 double* mem = v.mem.data();
@@ -326,34 +352,34 @@ struct FilterLab : Module {
                     mem[fscript::B_P1 + i] = pSmooth[c][i];
                     mem[fscript::B_CV1 + i] = cv;
                 }
-                float up[filterlab::Oversampler::kMaxFactor], up2[filterlab::Oversampler::kMaxFactor];
-                float yo[filterlab::Oversampler::kMaxFactor], yo2[filterlab::Oversampler::kMaxFactor];
-                osIn[c].up(inputs[IN_INPUT].getPolyVoltage(c) / kFullScale, up);
-                osIn2[c].up(inputs[IN2_INPUT].getPolyVoltage(c) / kFullScale, up2);
+                float up[kAudioIns][F], y[kAudioOuts][F];
+                for (int i = 0; i < kAudioIns; i++)
+                    osIn[i][c].up(inputs[audioIn(i)].getPolyVoltage(c) / kFullScale, up[i]);
                 bool ok = true;
                 for (int k = 0; k < osFactor; k++) {
-                    mem[fscript::B_IN] = up[k];
-                    mem[fscript::B_IN2] = up2[k];
+                    for (int i = 0; i < kAudioIns; i++) mem[fscript::B_IN + i] = up[i][k];
                     ok &= fscript::run(cur->prog, v);
-                    yo[k] = (float)mem[fscript::B_OUT];
-                    yo2[k] = (float)mem[fscript::B_OUT2];
+                    for (int i = 0; i < kAudioOuts; i++) {
+                        y[i][k] = (float)mem[fscript::B_OUT + i];
+                        ok &= std::isfinite(mem[fscript::B_OUT + i]);
+                    }
                 }
-                o = osOut[c].down(yo);
-                o2 = osOut2[c].down(yo2);
-                if (!ok || !std::isfinite(o) || !std::isfinite(o2) || !std::isfinite(mem[fscript::B_OUT]) ||
-                    !std::isfinite(mem[fscript::B_OUT2])) {
+                for (int i = 0; i < kAudioOuts; i++) {
+                    o[i] = osOut[i][c].down(y[i]);
+                    ok &= std::isfinite(o[i]);
+                }
+                if (!ok) {
                     blew = true;
                     fscript::reset(cur->prog, v, sr, c);
-                    osOut[c].reset();
-                    osOut2[c].reset();
-                    o = o2 = 0.f;
+                    for (int i = 0; i < kAudioOuts; i++) {
+                        osOut[i][c].reset();
+                        o[i] = 0.f;
+                    }
                 }
             }
-            outputs[OUT_OUTPUT].setVoltage(clamp(o * kFullScale, -12.f, 12.f), c);
-            outputs[OUT2_OUTPUT].setVoltage(clamp(o2 * kFullScale, -12.f, 12.f), c);
+            for (int i = 0; i < kAudioOuts; i++) outputs[i].setVoltage(clamp(o[i] * kFullScale, -12.f, 12.f), c);
         }
-        outputs[OUT_OUTPUT].setChannels(channels);
-        outputs[OUT2_OUTPUT].setChannels(channels);
+        for (int i = 0; i < kAudioOuts; i++) outputs[i].setChannels(channels);
 
         if (blew) {
             resetLightTime = 0.3f;
@@ -371,8 +397,9 @@ struct FilterLab : Module {
 namespace {
 
 const char* const kKeywords[] = {"if", "else", "for", "in", "init", "buf", "const", "fn"};
-const char* const kBuiltins[] = {"in", "in2", "p1", "p2", "p3", "p4", "cv1", "cv2", "cv3", "cv4", "sr",
-                                 "dt", "ch", "out", "out2", "pi", "tau", "e"};
+const char* const kBuiltins[] = {"in",  "in1", "in2", "in3",  "in4",  "p1",   "p2",   "p3",  "p4", "cv1",
+                                 "cv2", "cv3", "cv4", "sr",   "dt",   "ch",   "out",  "out1", "out2",
+                                 "out3", "out4", "pi", "tau", "e"};
 
 bool isWordChar(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
 
@@ -1015,8 +1042,27 @@ struct ModelDisplay : widget::OpaqueWidget {
 // Script-defined labels next to the knobs and jacks.
 struct DynamicLabels : widget::Widget {
     FilterLab* module = nullptr;
-    std::vector<Vec> knobPos;  // mm, left edge, baseline
-    Vec jackPos[4];            // in, in2, out, out2 (mm, centre)
+    std::vector<Vec> knobPos;               // mm, left edge, baseline
+    Vec inPos[FilterLab::kAudioIns];        // jack centres, mm
+    Vec outPos[FilterLab::kAudioOuts];
+
+    // Caption above a jack (IN1, OUT3, ...), and the script's name for it below, if any.
+    void jackLabel(NVGcontext* vg, int fontId, int boldId, Vec jack, const char* caption, const std::string& name,
+                   bool onDark) {
+        Vec top = mm2px(jack.plus(Vec(0.f, -6.4f)));
+        Vec bottom = mm2px(jack.plus(Vec(0.f, 6.1f)));
+        nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontFaceId(vg, boldId);
+        nvgFontSize(vg, 7.f);
+        nvgFillColor(vg, onDark ? kPanelLight : kPanelDark);
+        nvgText(vg, top.x, top.y, caption, nullptr);
+        if (name.empty()) return;
+        std::string s = name.size() > 8 ? name.substr(0, 7) + "." : name;
+        nvgFontFaceId(vg, fontId);
+        nvgFontSize(vg, 6.f);
+        nvgFillColor(vg, onDark ? kPanelGrey : nvgRGB(0x50, 0x50, 0x54));
+        nvgText(vg, bottom.x, bottom.y, s.c_str(), nullptr);
+    }
 
     void draw(const DrawArgs& args) override {
         std::shared_ptr<window::Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
@@ -1038,18 +1084,12 @@ struct DynamicLabels : widget::Widget {
                 nvgText(args.vg, p.x + 13.f, p.y, label.substr(0, 22).c_str(), nullptr);
             }
         }
-        const char* fallback[4] = {"IN", "IN2", "OUT", "OUT2"};
-        nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFontFaceId(args.vg, bold->handle);
-        for (int i = 0; i < 4; i++) {
-            std::string s = fallback[i];
-            if (module) s = i < 2 ? module->inLabels[i] : module->outLabels[i - 2];
-            if (s.size() > 9) s = s.substr(0, 9);
-            nvgFontSize(args.vg, s.size() > 5 ? 6.f : 7.5f);
-            nvgFillColor(args.vg, i < 2 ? kPanelDark : kPanelLight);
-            Vec p = mm2px(jackPos[i]);
-            nvgText(args.vg, p.x, p.y, s.c_str(), nullptr);
-        }
+        for (int i = 0; i < FilterLab::kAudioIns; i++)
+            jackLabel(args.vg, font->handle, bold->handle, inPos[i], FilterLab::inCaption(i),
+                      module ? module->inLabels[i] : "", false);
+        for (int i = 0; i < FilterLab::kAudioOuts; i++)
+            jackLabel(args.vg, font->handle, bold->handle, outPos[i], FilterLab::outCaption(i),
+                      module ? module->outLabels[i] : "", true);
         Widget::draw(args);
     }
 };
@@ -1120,8 +1160,8 @@ struct FilterLabWidget : ModuleWidget {
         labels->labels = {
             {Vec(28.f, 6.2f), "FILTER LAB", 13.f, true, kPanelLight},
             {Vec(28.f, 11.2f), "write your own filters", 6.5f, false, kPanelGrey},
-            {Vec(209.f, 90.0f), "ERR", 6.f, false, kPanelDark},
-            {Vec(209.f, 101.0f), "RESET", 6.f, false, kPanelDark},
+            {Vec(171.6f, 4.4f), "ERR", 6.f, false, kPanelGrey},
+            {Vec(173.6f, 9.4f), "RESET", 6.f, false, kPanelGrey},
         };
         addChild(labels);
 
@@ -1147,18 +1187,19 @@ struct FilterLabWidget : ModuleWidget {
             addParam(createParamCentered<Trimpot>(mm2px(Vec(xt, y)), module, FilterLab::ATT1_PARAM + i));
             addInput(createInputCentered<PJ301MPort>(mm2px(Vec(xj, y)), module, FilterLab::CV1_INPUT + i));
         }
-        dyn->jackPos[0] = Vec(xk, 90.f);
-        dyn->jackPos[1] = Vec(xt, 90.f);
-        dyn->jackPos[2] = Vec(xk, 109.6f);
-        dyn->jackPos[3] = Vec(xt, 109.6f);
+        // four jacks per row, in the inputs group and in the dark output band
+        const float xs[4] = {178.f, 189.5f, 201.f, 212.5f};
+        for (int i = 0; i < FilterLab::kAudioIns; i++) {
+            dyn->inPos[i] = Vec(xs[i], 93.6f);
+            addInput(createInputCentered<PJ301MPort>(mm2px(dyn->inPos[i]), module, FilterLab::audioIn(i)));
+        }
+        for (int i = 0; i < FilterLab::kAudioOuts; i++) {
+            dyn->outPos[i] = Vec(xs[i], 114.2f);
+            addOutput(createOutputCentered<PJ301MPort>(mm2px(dyn->outPos[i]), module, i));
+        }
         addChild(dyn);
-
-        addInput(createInputCentered<PJ301MPort>(mm2px(Vec(xk, 97.f)), module, FilterLab::IN_INPUT));
-        addInput(createInputCentered<PJ301MPort>(mm2px(Vec(xt, 97.f)), module, FilterLab::IN2_INPUT));
-        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(xk, 116.f)), module, FilterLab::OUT_OUTPUT));
-        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(xt, 116.f)), module, FilterLab::OUT2_OUTPUT));
-        addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(209.f, 94.5f)), module, FilterLab::ERROR_LIGHT));
-        addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(209.f, 105.5f)), module, FilterLab::RESET_LIGHT));
+        addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(166.f, 4.4f)), module, FilterLab::ERROR_LIGHT));
+        addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(166.f, 9.4f)), module, FilterLab::RESET_LIGHT));
     }
 
     void appendContextMenu(Menu* menu) override {

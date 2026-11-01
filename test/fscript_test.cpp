@@ -70,6 +70,20 @@ static void language() {
     CHECK(eval1("out = 1.5e1 + .5") == 15.5, "numbers");
     CHECK(eval1("/* c */ out = 1 // c") == 1, "comments");
 
+    // four inputs and outputs, in1/out1 aliases
+    {
+        Program p;
+        Voice v;
+        build("out = in1 + 1\nout2 = in2 * 2\nout3 = in3 - in4\nout4 = in4\nout1 += 10", p, v);
+        v.mem[B_IN] = 1;
+        v.mem[B_IN2] = 2;
+        v.mem[B_IN3] = 3;
+        v.mem[B_IN4] = 4;
+        run(p, v);
+        CHECK(v.mem[B_OUT] == 12 && v.mem[B_OUT2] == 4 && v.mem[B_OUT3] == -1 && v.mem[B_OUT4] == 4, "4 in / 4 out");
+        CHECK(compileFails("in3 = 1", 1), "assign in3");
+        CHECK(compileFails("#out5 x\nout = 0", 1), "no out5");
+    }
     // state persists
     {
         Program p;
@@ -100,8 +114,10 @@ static void language() {
     {
         Program p;
         Error e;
-        compile("#name Foo bar\n#p2  Cut off \n#out2 BP\nout = 0", p, e);
-        CHECK(p.name == "Foo bar" && p.paramLabel[1] == "Cut off" && p.out2Label == "BP", "directives");
+        compile("#name Foo bar\n#p2  Cut off \n#out2 BP\n#in Main\n#in4 Side\n#out1 LP\n#out4 Notch\nout = 0", p, e);
+        CHECK(p.name == "Foo bar" && p.paramLabel[1] == "Cut off" && p.outLabel[1] == "BP", "directives");
+        CHECK(p.inLabel[0] == "Main" && p.inLabel[3] == "Side" && p.inLabel[1].empty(), "input labels");
+        CHECK(p.outLabel[0] == "LP" && p.outLabel[3] == "Notch" && p.outLabel[2].empty(), "output labels");
     }
     // errors carry the right line
     CHECK(compileFails("out = 1\nout = cutof", 2), "unknown variable");
@@ -178,11 +194,15 @@ static void presets() {
                     double x = n < 10000 ? ((r >> 8) / 8388608.0 - 1.0) * 2 : ((n / 50) & 1 ? 2.0 : -2.0);
                     v.mem[B_IN] = x;
                     v.mem[B_IN2] = x;
+                    v.mem[B_IN3] = x;
+                    v.mem[B_IN4] = -x;
                     for (int j = 0; j < 4; j++) v.mem[B_P1 + j] = k[j];
                     budget &= run(p, v);
-                    double o = v.mem[B_OUT], o2 = v.mem[B_OUT2];
-                    if (!std::isfinite(o) || !std::isfinite(o2)) finite = false;
-                    peak = std::fmax(peak, std::fmax(std::fabs(o), std::fabs(o2)));
+                    for (int j = B_OUT; j <= B_OUT4; j++) {
+                        double o = v.mem[j];
+                        if (!std::isfinite(o)) finite = false;
+                        peak = std::fmax(peak, std::fabs(o));
+                    }
                 }
                 CHECK(finite && budget, "preset %s sr %g corner %d: not finite", pr.name, sr, corner);
                 CHECK(peak < 50, "preset %s sr %g corner %d: peak %g", pr.name, sr, corner, peak);

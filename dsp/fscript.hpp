@@ -12,10 +12,12 @@
 namespace fscript {
 
 // Builtin slots at the start of a voice's memory. Inputs are written by the host before each
-// sample; out and out2 are read after it.
+// sample; out..out4 are read after it.
 enum Builtin {
     B_IN,
     B_IN2,
+    B_IN3,
+    B_IN4,
     B_P1,
     B_P2,
     B_P3,
@@ -29,6 +31,8 @@ enum Builtin {
     B_CH,
     B_OUT,
     B_OUT2,
+    B_OUT3,
+    B_OUT4,
     B_COUNT
 };
 
@@ -62,7 +66,8 @@ struct Program {
     // header directives
     std::string name;
     std::string paramLabel[4];
-    std::string in2Label, outLabel, out2Label;
+    std::string inLabel[4];   // #in (or #in1), #in2, #in3, #in4
+    std::string outLabel[4];  // #out (or #out1), #out2, #out3, #out4
 };
 
 struct Error {

@@ -237,10 +237,13 @@ at the top: twelve factory models and any you add.
 | display | `<` / `>` step through the models, the name opens the list, the wheel scrolls; `*` marks an edited factory model, `[...]` a user model |
 | editor | the current model's code; the status line shows the compile error (the line is marked red) or `ok`, the op count and the oversampling |
 | P1..P4, attenuverter, CV | `p1..p4` in the script: knob + CV × amount / 10 V, clamped to 0..1 and smoothed (2 ms). With `hz(p)` a full CV amount is 1 V/oct. The labels come from the script's `#p1`..`#p4` lines; the raw CV is also `cv1..cv4` |
-| IN, IN2 | `in`, `in2`; 5 V is 1.0 |
-| OUT, OUT2 | `out`, `out2`; 1.0 is 5 V, clamped to ±12 V. Labels from `#out`, `#out2` |
-| ERR | the code does not compile (the last good version keeps running) |
-| RESET | a voice produced NaN or infinity and was reset, or a loop ran past its budget |
+| IN1..IN4 | `in` (or `in1`), `in2`, `in3`, `in4`; 5 V is 1.0 |
+| OUT1..OUT4 | `out` (or `out1`), `out2`, `out3`, `out4`; 1.0 is 5 V, clamped to ±12 V |
+| ERR (title band) | the code does not compile (the last good version keeps running) |
+| RESET (title band) | a voice produced NaN or infinity and was reset, or a loop ran past its budget |
+
+Every jack carries its fixed caption (IN1..IN4, OUT1..OUT4) above it and, below it, the name the
+script gives it with `#in`..`#in4` and `#out`..`#out4` (also in the jack's tooltip).
 
 Polyphonic: one voice of state per channel, up to 16, the channel count being the largest of the
 inputs'. Context menu: model list, new model from the template, duplicate as a new model, revert
@@ -258,7 +261,7 @@ keyboard, Rack's shortcuts and the computer-keyboard MIDI are off.
 ### fscript
 
 ```
-#name One-Pole LP/HP          // header lines label the panel: #name #p1..#p4 #in2 #out #out2
+#name One-Pole LP/HP          // header lines label the panel: #name #p1..#p4 #in..#in4 #out..#out4
 #p1 Cutoff
 g = warp(hz(p1))              // every variable is per-voice state: kept between samples, starts at 0
 v = (in - s) * g / (1 + g)
@@ -270,8 +273,9 @@ out2 = in - lp
 
 The script runs once per sample per channel (or `factor` times with oversampling).
 
-- **Inputs** (read only): `in`, `in2`, `p1..p4`, `cv1..cv4` (volts), `sr`, `dt` (= 1/sr), `ch`
-  (channel index). **Outputs**: `out`, `out2`. **Constants**: `pi`, `tau`, `e`.
+- **Inputs** (read only): `in`, `in2`, `in3`, `in4` (`in1` is `in`), `p1..p4`, `cv1..cv4` (volts),
+  `sr`, `dt` (= 1/sr), `ch` (channel index). **Outputs**: `out`, `out2`, `out3`, `out4` (`out1` is
+  `out`). **Constants**: `pi`, `tau`, `e`.
 - **Statements**: `x = expr` (also `+= -= *= /=`; semicolons optional), `if c { } else if c { } else { }`
   (braces optional for a single statement), `for i in a..b { }` (b excluded), `init { }` (runs on
   reset: load, edit of init values, sample rate or oversampling change).

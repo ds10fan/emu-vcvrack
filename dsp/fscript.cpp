@@ -96,8 +96,9 @@ const FnInfo* findFn(const std::string& name) {
     return nullptr;
 }
 
-const char* const kBuiltinNames[B_COUNT] = {"in",  "in2", "p1", "p2", "p3",  "p4", "cv1", "cv2",
-                                            "cv3", "cv4", "sr", "dt", "ch", "out", "out2"};
+const char* const kBuiltinNames[B_COUNT] = {"in",  "in2", "in3", "in4", "p1",  "p2",  "p3",  "p4",   "cv1",
+                                            "cv2", "cv3", "cv4", "sr",  "dt",  "ch",  "out", "out2", "out3",
+                                            "out4"};
 
 inline double fn1(int id, double x, double sr) {
     switch (id) {
@@ -519,14 +520,14 @@ struct Parser {
             prog->name = val;
         else if (key == "p1" || key == "p2" || key == "p3" || key == "p4")
             prog->paramLabel[key[1] - '1'] = val;
-        else if (key == "in2")
-            prog->in2Label = val;
+        else if (key == "in" || key == "in1" || key == "in2" || key == "in3" || key == "in4")
+            prog->inLabel[key.size() == 2 ? 0 : key[2] - '1'] = val;
         else if (key == "out")
-            prog->outLabel = val;
-        else if (key == "out2")
-            prog->out2Label = val;
+            prog->outLabel[0] = val;
+        else if (key == "out1" || key == "out2" || key == "out3" || key == "out4")
+            prog->outLabel[key[3] - '1'] = val;
         else
-            fail(d.line, d.col, "unknown directive '#" + key + "' (#name, #p1..#p4, #in2, #out, #out2)");
+            fail(d.line, d.col, "unknown directive '#" + key + "' (#name, #p1..#p4, #in..#in4, #out..#out4)");
     }
 
     void statement(std::vector<StmtP>& into, bool top) {
@@ -1141,7 +1142,7 @@ struct Gen {
         if (indexed) {
             if (sym.kind != Sym::BUF) fail(s->line, s->col, "'" + name + "' is not a buffer");
         } else if (sym.kind == Sym::BUILTIN) {
-            if (sym.slot != B_OUT && sym.slot != B_OUT2)
+            if (sym.slot < B_OUT || sym.slot > B_OUT4)
                 fail(s->line, s->col, "'" + name + "' is an input and cannot be assigned");
         } else if (sym.kind == Sym::BUF) {
             fail(s->line, s->col, "'" + name + "' is a buffer; assign an element as " + name + "[i] = ...");
@@ -1175,6 +1176,8 @@ bool compile(const std::string& src, Program& prog, Error& err) {
             s.slot = i;
             g.syms[kBuiltinNames[i]] = s;
         }
+        g.syms["in1"] = g.syms["in"];
+        g.syms["out1"] = g.syms["out"];
         const struct {
             const char* name;
             double v;
@@ -1327,8 +1330,7 @@ void transfer(const Program& from, const Voice& vf, const Program& to, Voice& vt
             }
         }
     }
-    vt.mem[B_OUT] = vf.mem[B_OUT];
-    vt.mem[B_OUT2] = vf.mem[B_OUT2];
+    for (int i = B_OUT; i <= B_OUT4; i++) vt.mem[i] = vf.mem[i];
     vt.rng = vf.rng;
 }
 

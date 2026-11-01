@@ -362,16 +362,21 @@ out2 = x
 #p2 Knob 2
 #p3 Knob 3
 #p4 Knob 4
+#in Main
+#in2 Aux
 #out Out
 #out2 Out 2
+#out3 In 3
+#out4 In 4
 // fscript quick reference
 //
 // Runs once per sample per polyphonic channel. Every variable keeps its value
 // between samples (per channel) and starts at 0.
 //
-// inputs : in, in2 (audio, 5 V = 1.0)   p1..p4 (knob + CV, 0..1, smoothed)
+// inputs : in, in2, in3, in4 (audio, 5 V = 1.0; in1 = in)
+//          p1..p4 (knob + CV, 0..1, smoothed)
 //          cv1..cv4 (raw CV volts)   sr (sample rate)   dt (1/sr)   ch (channel)
-// outputs: out, out2 (1.0 = 5 V, clamped at +-12 V)
+// outputs: out, out2, out3, out4 (1.0 = 5 V, clamped at +-12 V; out1 = out)
 // consts : pi, tau, e
 // ops    : + - * / % ^  < <= > >= == !=  && || !  c ? a : b
 //          = += -= *= /=
@@ -387,13 +392,16 @@ out2 = x
 //          hz(p)  20 Hz * 1000^p        warp(f)  tan(pi f / sr)
 //          mtof(n)  vtof(v)  db(x)  clip(x)  soft(x)  noise()
 //          tap(buf, pos) interpolated read   len(buf)
-// header : #name, #p1..#p4, #in2, #out, #out2 label the panel
+// header : #name, #p1..#p4, #in..#in4, #out..#out4 label the panel
+//          (the knobs and the jacks: IN1..IN4 and OUT1..OUT4)
 //
 // Edits compile as you type; state with the same name is kept, so the sound
 // doesn't drop out. Ctrl+Z undoes, Tab indents.
 
 out = in
 out2 = in2
+out3 = in3
+out4 = in4
 )"},
 
 };
