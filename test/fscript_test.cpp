@@ -6,6 +6,8 @@
 #include "../dsp/filterlab_presets.hpp"
 #include "../dsp/fscript.hpp"
 #include "../dsp/oversampler.hpp"
+#include "../dsp/response.hpp"
+#include <chrono>
 
 using namespace fscript;
 
@@ -305,11 +307,63 @@ static void oversampler() {
     }
 }
 
+// The impulse response analysis agrees with the sine measurements above.
+static void analysis() {
+    Program p;
+    const double cv[4] = {0, 0, 0, 0};
+    struct Case {
+        const char* name;
+        double k[4];
+    } cases[] = {{"One-Pole", {0.5, 0, 0, 0}}, {"RBJ Biquad", {0.5, 0.3, 0.9, 1.0}}, {"Butterworth 24", {0.5, 0, 0, 0}}};
+    const double freqs[] = {63, 316, 632.5, 1265, 6325};
+    for (const Case& c : cases) {
+        if (!find(c.name, p)) continue;
+        int factors[] = {1, 4};
+        for (int os : factors) {
+            filterlab::Response r;
+            CHECK(filterlab::analyse(p, c.k, cv, 48000, os, 1.0, 8192, r), "analyse %s x%d", c.name, os);
+            for (double f : freqs) {
+                double want = dB(gain(p, f, c.k[0], c.k[1], c.k[2], c.k[3])), got = dB(r.at(0, f));
+                if (want < -70) continue;
+                CHECK(std::fabs(want - got) < 0.5, "analyse %s x%d at %g Hz: %g, sine %g", c.name, os, f, got, want);
+            }
+            CHECK(r.active[0] && !r.active[3], "analyse %s: active outputs", c.name);
+        }
+    }
+    // a program that blows up is reported, not plotted
+    Program bad;
+    Voice v;
+    if (build("y = y * 4 + in\nout = 1 / (y - y)", bad, v)) {
+        filterlab::Response r;
+        const double k[4] = {0, 0, 0, 0};
+        CHECK(!filterlab::analyse(bad, k, cv, 48000, 1, 1.0, 8192, r) && !r.ok, "analyse: blow-up not reported");
+    }
+    // cost of one analysis of the heaviest factory model, for the record
+    double worst = 0;
+    const char* worstName = "";
+    for (int i = 0; i < filterlab::kPresetCount; i++) {
+        Program q;
+        Error e;
+        if (!compile(filterlab::kPresets[i].code, q, e)) continue;
+        const double k[4] = {0.5, 0.5, 0.5, 0.5};
+        filterlab::Response r;
+        auto t0 = std::chrono::steady_clock::now();
+        filterlab::analyse(q, k, cv, 48000, 1, 1.0, 8192, r);
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (ms > worst) {
+            worst = ms;
+            worstName = filterlab::kPresets[i].name;
+        }
+    }
+    std::printf("  analyse 8192 samples x1: worst %.2f ms (%s)\n", worst, worstName);
+}
+
 int main() {
     language();
     presets();
     responses();
     oversampler();
+    analysis();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

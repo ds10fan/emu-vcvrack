@@ -235,6 +235,7 @@ at the top: twelve factory models and any you add.
 | Control | Function |
 |---|---|
 | display | `<` / `>` step through the models, the name opens the list, the wheel scrolls; `*` marks an edited factory model, `[...]` a user model |
+| CODE / RESP | what the screen shows: the editor or the frequency response |
 | editor | the current model's code; the status line shows the compile error (the line is marked red) or `ok`, the op count and the oversampling |
 | P1..P4, attenuverter, CV | `p1..p4` in the script: knob + CV × amount / 10 V, clamped to 0..1 and smoothed (2 ms). With `hz(p)` a full CV amount is 1 V/oct. The labels come from the script's `#p1`..`#p4` lines; the raw CV is also `cv1..cv4` |
 | IN1..IN4 | `in` (or `in1`), `in2`, `in3`, `in4`; 5 V is 1.0 |
@@ -245,12 +246,20 @@ at the top: twelve factory models and any you add.
 Every jack carries its fixed caption (IN1..IN4, OUT1..OUT4) above it and, below it, the name the
 script gives it with `#in`..`#in4` and `#out`..`#out4` (also in the jack's tooltip).
 
+RESP replaces the editor with the filter's magnitude response: an impulse goes into IN1 of a fresh
+voice (through the oversampler, as in the module), and the spectrum of the 8192 samples that come
+out is drawn for every output that is not silent, 20 Hz to half the sample rate, +24 to -72 dB.
+It follows the knobs and the CVs of channel 1 and every recompile; the mouse reads the frequency
+and each output's level. A nonlinear filter's response depends on the impulse's height: 1.0 (5 V)
+by default, -20 or -40 dB from the context menu for the small-signal response. A model that
+modulates itself (the Phaser's LFO) is shown as it is right after a reset.
+
 Polyphonic: one voice of state per channel, up to 16, the channel count being the largest of the
 inputs'. Context menu: model list, new model from the template, duplicate as a new model, revert
 to factory code, delete a user model, load/save a model as a `.fs` text file (default folder
-`<Rack user folder>/FilterLab`), reset state, oversampling (off, 2×, 4×, 8×; the script then sees
+`<Rack user folder>/FilterLab`), screen (code or response), response impulse level, reset state, oversampling (off, 2×, 4×, 8×; the script then sees
 the oversampled `sr`), compile as you type (off: Ctrl+Enter), editor font size. Edited factory
-models and user models are saved in the patch.
+models, user models and these settings are saved in the patch.
 
 Editor keys: arrows, Home (first non-blank, then column 0), End, PgUp/PgDn, Ctrl+Home/End, Shift
 to select, double-click selects a word, Tab / Shift+Tab indent (the selected lines), Enter keeps
@@ -323,7 +332,7 @@ make -C test ds10     # the DS10 drive formula
 make -C test gchip    # the G-chip interpolator against the spec's vectors, the voice, the WAV reader
 make -C test minty    # the sequencer core: quantised recording, ties, playback, clocks
 make -C test midiverb # the MidiVerb port: tables, all programs, and the JavaScript vectors if present
-make -C test fscript  # the Filter Lab language, every factory model (stability, responses), the oversampler
+make -C test fscript  # the Filter Lab language, every factory model (stability, responses), the oversampler, the response analysis
 make -C test smoke    # the Rack module headless against the SDK's libRack.so (16 channels, every type, cost)
 ```
 
@@ -343,7 +352,7 @@ src/DS10Drive.cpp            the drive module
 src/GChip.cpp                the sampler module: loading, voices, waveform display
 src/MintySeq.cpp             the recorder module: I/O, buttons, keys, displays, patch storage
 src/MidiVerb.cpp             the MidiVerb module: program display and menu, mix, feedback
-src/FilterLab.cpp            the Filter Lab module: code editor, model selector, voices, patch storage
+src/FilterLab.cpp            the Filter Lab module: code editor, response view, model selector, voices, patch storage
 src/widgets.hpp              runtime panel labels shared by the modules
 res/*.svg                    the panel graphics (labels are drawn at runtime)
 dsp/hchip.hpp, hchip.cpp     the chip model
@@ -357,6 +366,7 @@ dsp/emu_filters.hpp, .cpp    the EOS filter recipes
 dsp/fscript.hpp, .cpp        the Filter Lab language: lexer, parser, compiler, bytecode VM
 dsp/filterlab_presets.cpp    the factory filter models, in fscript
 dsp/oversampler.hpp          polyphase windowed-sinc up/downsampler (1, 2, 4, 8x)
+dsp/response.hpp             Filter Lab's response view: impulse response and FFT of a program
 test/hchip_test.cpp          DSP tests; test/expected/vectors.txt the reference vectors
 test/ds10_test.cpp           drive formula test
 test/gchip_test.cpp          interpolator, voice and WAV reader tests

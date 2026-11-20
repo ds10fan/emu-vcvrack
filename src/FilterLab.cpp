@@ -5,6 +5,9 @@
 // becomes a Bundle (program + 16 prepared voices) handed to the audio thread through an atomic
 // pointer; the audio thread carries the old voices' state over (same-named variables) and hands the
 // old bundle back through a second atomic pointer for the UI thread to free.
+//
+// The editor's place can show the filter's frequency response instead (dsp/response.hpp): the UI
+// thread keeps its own copy of the compiled program and runs an impulse through a fresh voice.
 #include "plugin.hpp"
 
 #include <atomic>
@@ -13,6 +16,7 @@
 #include "filterlab_presets.hpp"
 #include "fscript.hpp"
 #include "oversampler.hpp"
+#include "response.hpp"
 #include "widgets.hpp"
 
 namespace {
@@ -89,6 +93,11 @@ struct FilterLab : Module {
     int oversample = 1;      // saved; osRequest carries it to the audio thread
     float fontSize = 10.5f;  // editor font, saved
     bool liveCompile = true;
+    enum View { VIEW_CODE, VIEW_RESPONSE };
+    int view = VIEW_CODE;      // what the screen shows, saved
+    int impulseDb = 0;         // height of the analysis impulse re 1.0 (5 V): 0, -20 or -40, saved
+    fscript::Program uiProg;   // the last good program, for the response view
+    uint64_t progVersion = 0;  // bumps when uiProg is replaced
     uint64_t codeVersion = 1;  // bumps when the code is replaced from outside the editor
     // last compile
     std::atomic<bool> compileOk{false};
@@ -179,6 +188,8 @@ struct FilterLab : Module {
         }
         b->sampleRate = sr;
         b->keepState = keepState;
+        uiProg = b->prog;
+        progVersion++;
         delete pending.exchange(b);
         return true;
     }
@@ -239,6 +250,8 @@ struct FilterLab : Module {
         json_object_set_new(root, "oversample", json_integer(oversample));
         json_object_set_new(root, "fontSize", json_real(fontSize));
         json_object_set_new(root, "liveCompile", json_boolean(liveCompile));
+        json_object_set_new(root, "view", json_integer(view));
+        json_object_set_new(root, "impulseDb", json_integer(impulseDb));
         json_t* models = json_array();
         for (int i = 0; i < (int)entries.size(); i++) {
             const Entry& e = entries[i];
@@ -295,6 +308,8 @@ struct FilterLab : Module {
         if (json_t* j = json_object_get(root, "oversample")) oversample = clamp((int)json_integer_value(j), 1, 8);
         if (json_t* j = json_object_get(root, "fontSize")) fontSize = clamp((float)json_number_value(j), 7.f, 16.f);
         if (json_t* j = json_object_get(root, "liveCompile")) liveCompile = json_is_true(j);
+        if (json_t* j = json_object_get(root, "view")) view = json_integer_value(j) == VIEW_RESPONSE ? VIEW_RESPONSE : VIEW_CODE;
+        if (json_t* j = json_object_get(root, "impulseDb")) impulseDb = clamp((int)json_integer_value(j) / 20 * 20, -40, 0);
         osRequest = oversample;
         codeVersion++;
         compileCurrent(false);
@@ -960,6 +975,274 @@ struct CodeEditor : ui::TextField {
 };
 
 // =================================================================================================
+// The response view: the magnitude response of the running program at the current knob and CV
+// values (channel 1), from an impulse into IN1. One curve per output that is not silent.
+
+struct ResponseView : widget::OpaqueWidget {
+    FilterLab* module = nullptr;
+    filterlab::Response resp;
+    bool have = false;
+    // what the response on screen was computed from
+    uint64_t seenProg = 0;
+    double seenP[4] = {}, seenCv[4] = {}, seenRate = 0;
+    int seenOs = 0, seenDb = 1;
+    double lastTime = -10, lastCost = 0;
+    Vec mouse = Vec(-1, -1);
+
+    static constexpr int kSamples = 8192;
+    static constexpr float kTopDb = 24.f, kBottomDb = -72.f, kMinHz = 20.f;
+
+    void onHover(const HoverEvent& e) override {
+        OpaqueWidget::onHover(e);
+        mouse = e.pos;
+    }
+    void onLeave(const LeaveEvent& e) override { mouse = Vec(-1, -1); }
+
+    void step() override {
+        OpaqueWidget::step();
+        if (!module || !isVisible()) return;
+        double p[4], cv[4];
+        for (int i = 0; i < 4; i++) {
+            cv[i] = module->inputs[FilterLab::CV1_INPUT + i].getVoltage(0);
+            p[i] = clamp(module->params[FilterLab::P1_PARAM + i].getValue() +
+                             module->params[FilterLab::ATT1_PARAM + i].getValue() * (float)cv[i] / 10.f,
+                         0.f, 1.f);
+        }
+        double rate = APP->engine->getSampleRate();
+        bool same = have && seenProg == module->progVersion && seenRate == rate && seenOs == module->oversample &&
+                    seenDb == module->impulseDb;
+        for (int i = 0; i < 4 && same; i++) same = seenP[i] == p[i] && seenCv[i] == cv[i];
+        if (same) return;
+        // an expensive analysis (heavy script, oversampling) is not redone every frame
+        double now = system::getTime();
+        if (have && now - lastTime < lastCost * 4) return;
+        filterlab::analyse(module->uiProg, p, cv, rate, module->oversample, std::pow(10.0, module->impulseDb / 20.0),
+                           kSamples, resp);
+        lastCost = system::getTime() - now;
+        lastTime = now;
+        have = true;
+        seenProg = module->progVersion;
+        seenRate = rate;
+        seenOs = module->oversample;
+        seenDb = module->impulseDb;
+        for (int i = 0; i < 4; i++) {
+            seenP[i] = p[i];
+            seenCv[i] = cv[i];
+        }
+    }
+
+    void draw(const DrawArgs& args) override {
+        nvgBeginPath(args.vg);
+        nvgRoundedRect(args.vg, 0, 0, box.size.x, box.size.y, 2.f);
+        nvgFillColor(args.vg, nvgRGB(0x14, 0x15, 0x18));
+        nvgFill(args.vg);
+        nvgStrokeWidth(args.vg, 1.f);
+        nvgStrokeColor(args.vg, nvgRGB(0x40, 0x40, 0x44));
+        nvgStroke(args.vg);
+    }
+
+    static std::string hzText(float hz) {
+        if (hz >= 1000.f) return string::f(hz >= 10000.f ? "%.1f kHz" : "%.2f kHz", hz / 1000.f);
+        return string::f("%.0f Hz", hz);
+    }
+
+    void drawLayer(const DrawArgs& args, int layer) override {
+        if (layer != 1) {
+            Widget::drawLayer(args, layer);
+            return;
+        }
+        std::shared_ptr<window::Font> font = APP->window->loadFont(asset::system("res/fonts/ShareTechMono-Regular.ttf"));
+        if (!font) return;
+        NVGcontext* vg = args.vg;
+        nvgSave(vg);
+        nvgIntersectScissor(vg, 1, 1, box.size.x - 2, box.size.y - 2);
+        nvgFontFaceId(vg, font->handle);
+        nvgFontSize(vg, 9.f);
+        nvgTextLetterSpacing(vg, 0.f);
+
+        // plot area
+        const float x0 = 30.f, x1 = box.size.x - 8.f, y0 = 8.f, y1 = box.size.y - 16.f;
+        const float maxHz = (float)(resp.sampleRate > 0 ? resp.sampleRate : 48000.0) / 2.f;
+        const float span = std::log(maxHz / kMinHz);
+        auto xOf = [&](float hz) { return x0 + (x1 - x0) * std::log(hz / kMinHz) / span; };
+        auto hzOf = [&](float x) { return kMinHz * std::exp((x - x0) / (x1 - x0) * span); };
+        auto yOf = [&](float db) { return y0 + (y1 - y0) * (kTopDb - db) / (kTopDb - kBottomDb); };
+
+        // grid: every 12 dB, and 1-2-5 per decade
+        const NVGcolor cGrid = nvgRGB(0x2a, 0x2c, 0x32), cGridStrong = nvgRGB(0x48, 0x4a, 0x52),
+                       cAxis = nvgRGB(0x70, 0x72, 0x7a);
+        nvgStrokeWidth(vg, 1.f);
+        for (float db = kTopDb; db >= kBottomDb; db -= 12.f) {
+            float y = std::round(yOf(db)) + 0.5f;
+            nvgBeginPath(vg);
+            nvgMoveTo(vg, x0, y);
+            nvgLineTo(vg, x1, y);
+            nvgStrokeColor(vg, db == 0.f ? cGridStrong : cGrid);
+            nvgStroke(vg);
+            nvgFillColor(vg, cAxis);
+            nvgTextAlign(vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+            nvgText(vg, x0 - 4, y, string::f("%+.0f", db).c_str(), nullptr);
+        }
+        for (float decade = 10.f; decade < maxHz; decade *= 10.f) {
+            for (float m : {1.f, 2.f, 5.f}) {
+                float hz = decade * m;
+                if (hz < kMinHz || hz > maxHz) continue;
+                float x = std::round(xOf(hz)) + 0.5f;
+                nvgBeginPath(vg);
+                nvgMoveTo(vg, x, y0);
+                nvgLineTo(vg, x, y1);
+                nvgStrokeColor(vg, m == 1.f ? cGridStrong : cGrid);
+                nvgStroke(vg);
+                std::string t = hz >= 1000.f ? string::f("%.0fk", hz / 1000.f) : string::f("%.0f", hz);
+                nvgFillColor(vg, cAxis);
+                nvgTextAlign(vg, (hz == kMinHz ? NVG_ALIGN_LEFT : NVG_ALIGN_CENTER) | NVG_ALIGN_MIDDLE);
+                nvgText(vg, x, y1 + 8, t.c_str(), nullptr);
+            }
+        }
+
+        const NVGcolor colors[filterlab::Response::kOuts] = {nvgRGB(0xff, 0xb0, 0x30), nvgRGB(0x7f, 0xd0, 0xe0),
+                                                             nvgRGB(0x9a, 0xc8, 0x7a), nvgRGB(0xd0, 0x8a, 0xf0)};
+        auto dbOf = [](float g) { return 20.f * std::log10(std::max(g, 1e-9f)); };
+        const bool ok = have && resp.ok;
+
+        if (ok) {
+            // curves, back to front so OUT1 is on top
+            nvgSave(vg);
+            nvgIntersectScissor(vg, x0, y0, x1 - x0, y1 - y0);
+            const double binHz = resp.sampleRate / resp.n;
+            for (int o = filterlab::Response::kOuts - 1; o >= 0; o--) {
+                if (!resp.active[o]) continue;
+                nvgBeginPath(vg);
+                bool first = true;
+                for (float x = x0; x <= x1; x += 1.f) {
+                    // a pixel that spans several bins shows the largest of them
+                    float ha = hzOf(x - 0.5f), hb = hzOf(x + 0.5f);
+                    int ba = (int)std::ceil(ha / binHz), bb = (int)std::floor(hb / binHz);
+                    float g = resp.at(o, hzOf(x));
+                    for (int b = std::max(ba, 0); b <= std::min(bb, resp.n / 2); b++) g = std::max(g, resp.mag[o][b]);
+                    float y = yOf(clamp(dbOf(g), kBottomDb - 12.f, kTopDb + 12.f));
+                    if (first)
+                        nvgMoveTo(vg, x, y);
+                    else
+                        nvgLineTo(vg, x, y);
+                    first = false;
+                }
+                nvgStrokeColor(vg, colors[o]);
+                nvgStrokeWidth(vg, o == 0 ? 1.6f : 1.2f);
+                nvgLineJoin(vg, NVG_ROUND);
+                nvgStroke(vg);
+            }
+            nvgRestore(vg);
+        }
+
+        // cursor
+        const bool hover = ok && mouse.x >= x0 && mouse.x <= x1 && mouse.y >= y0 && mouse.y <= y1;
+        float hoverHz = 0.f;
+        if (hover) {
+            hoverHz = hzOf(mouse.x);
+            float x = std::round(mouse.x) + 0.5f;
+            nvgBeginPath(vg);
+            nvgMoveTo(vg, x, y0);
+            nvgLineTo(vg, x, y1);
+            nvgStrokeWidth(vg, 1.f);
+            nvgStrokeColor(vg, nvgRGBA(0xff, 0xff, 0xff, 0x50));
+            nvgStroke(vg);
+        }
+
+        // legend, top right: one line per plotted output, with the level under the cursor
+        nvgFontSize(vg, 10.f);
+        if (!module) {
+            nvgFillColor(vg, cAxis);
+            nvgTextAlign(vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+            nvgText(vg, x1 - 6, y0 + 10, "frequency response", nullptr);
+        } else if (!ok) {
+            nvgFillColor(vg, nvgRGB(0xff, 0x70, 0x70));
+            nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgText(vg, (x0 + x1) / 2, (y0 + y1) / 2, "the filter blew up on the impulse (NaN, infinity or loop budget)",
+                    nullptr);
+        } else {
+            std::vector<std::pair<int, std::string>> lines;
+            for (int o = 0; o < filterlab::Response::kOuts; o++) {
+                if (!resp.active[o]) continue;
+                std::string t = FilterLab::outCaption(o);
+                if (!module->outLabels[o].empty()) t += " " + module->outLabels[o];
+                if (hover) t += string::f(" %+6.1f dB", dbOf(resp.at(o, hoverHz)));
+                lines.push_back({o, t});
+            }
+            float w = 0;
+            for (auto& l : lines) w = std::max(w, nvgTextBounds(vg, 0, 0, l.second.c_str(), nullptr, nullptr));
+            std::string head = hover ? hzText(hoverHz) : "impulse > IN1";
+            w = std::max(w, nvgTextBounds(vg, 0, 0, head.c_str(), nullptr, nullptr));
+            const float lh = 12.f, bw = w + 12.f, bh = lh * (lines.size() + 1) + 6.f;
+            const float bx = x1 - bw - 4.f, by = y0 + 4.f;
+            nvgBeginPath(vg);
+            nvgRoundedRect(vg, bx, by, bw, bh, 2.f);
+            nvgFillColor(vg, nvgRGBA(0x14, 0x15, 0x18, 0xd0));
+            nvgFill(vg);
+            nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgFillColor(vg, cAxis);
+            nvgText(vg, bx + 6, by + 3 + lh / 2, head.c_str(), nullptr);
+            for (size_t i = 0; i < lines.size(); i++) {
+                nvgFillColor(vg, colors[lines[i].first]);
+                nvgText(vg, bx + 6, by + 3 + lh * (i + 1) + lh / 2, lines[i].second.c_str(), nullptr);
+            }
+            if (lines.empty()) {
+                nvgFillColor(vg, cAxis);
+                nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+                nvgText(vg, (x0 + x1) / 2, (y0 + y1) / 2, "every output is silent", nullptr);
+            }
+        }
+        if (module && !module->compileOk) {
+            nvgFillColor(vg, nvgRGB(0xff, 0x70, 0x70));
+            nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgText(vg, x0 + 6, y0 + 10, "compile error: showing the last good version", nullptr);
+        }
+        nvgRestore(vg);
+        Widget::drawLayer(args, layer);
+    }
+};
+
+// CODE / RESP in the title band: what the screen shows.
+struct ViewSwitch : widget::OpaqueWidget {
+    FilterLab* module = nullptr;
+
+    void onButton(const ButtonEvent& e) override {
+        OpaqueWidget::onButton(e);
+        if (!module || e.action != GLFW_PRESS || e.button != GLFW_MOUSE_BUTTON_LEFT) return;
+        e.consume(this);
+        module->view = e.pos.x < box.size.x / 2 ? FilterLab::VIEW_CODE : FilterLab::VIEW_RESPONSE;
+    }
+
+    void draw(const DrawArgs& args) override {
+        nvgBeginPath(args.vg);
+        nvgRoundedRect(args.vg, 0, 0, box.size.x, box.size.y, 2.f);
+        nvgFillColor(args.vg, nvgRGB(0x12, 0x12, 0x14));
+        nvgFill(args.vg);
+        nvgStrokeWidth(args.vg, 1.f);
+        nvgStrokeColor(args.vg, nvgRGB(0x40, 0x40, 0x44));
+        nvgStroke(args.vg);
+    }
+
+    void drawLayer(const DrawArgs& args, int layer) override {
+        if (layer == 1) {
+            std::shared_ptr<window::Font> font = APP->window->loadFont(asset::system("res/fonts/ShareTechMono-Regular.ttf"));
+            if (font) {
+                int view = module ? module->view : FilterLab::VIEW_CODE;
+                const char* const names[2] = {"CODE", "RESP"};
+                nvgFontFaceId(args.vg, font->handle);
+                nvgFontSize(args.vg, 10.f);
+                nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+                for (int i = 0; i < 2; i++) {
+                    nvgFillColor(args.vg, i == view ? nvgRGB(0xff, 0xb0, 0x30) : nvgRGB(0x70, 0x58, 0x28));
+                    nvgText(args.vg, box.size.x * (0.25f + 0.5f * i), box.size.y / 2, names[i], nullptr);
+                }
+            }
+        }
+        Widget::drawLayer(args, layer);
+    }
+};
+
+// =================================================================================================
 // Model selector: "<  name  >" in the title band. Arrows step, the name opens the list.
 
 static void modelMenu(FilterLab* module);
@@ -1147,6 +1430,18 @@ static void modelMenu(FilterLab* module) {
 }
 
 struct FilterLabWidget : ModuleWidget {
+    CodeEditor* editor = nullptr;
+    ResponseView* response = nullptr;
+
+    void step() override {
+        FilterLab* module = dynamic_cast<FilterLab*>(this->module);
+        bool code = !module || module->view == FilterLab::VIEW_CODE;
+        if (!code && APP->event->selectedWidget == editor) APP->event->setSelectedWidget(nullptr);
+        editor->setVisible(code);
+        response->setVisible(!code);
+        ModuleWidget::step();
+    }
+
     FilterLabWidget(FilterLab* module) {
         setModule(module);
         setPanel(createPanel(asset::plugin(pluginInstance, "res/FilterLab.svg")));
@@ -1166,15 +1461,26 @@ struct FilterLabWidget : ModuleWidget {
         addChild(labels);
 
         ModelDisplay* display = createWidget<ModelDisplay>(mm2px(Vec(56.f, 2.6f)));
-        display->box.size = mm2px(Vec(160.f - 56.f, 8.6f));
+        display->box.size = mm2px(Vec(138.f - 56.f, 8.6f));
         display->module = module;
         addChild(display);
 
-        CodeEditor* editor = createWidget<CodeEditor>(mm2px(Vec(3.f, 14.5f)));
+        ViewSwitch* viewSwitch = createWidget<ViewSwitch>(mm2px(Vec(140.f, 2.6f)));
+        viewSwitch->box.size = mm2px(Vec(20.f, 8.6f));
+        viewSwitch->module = module;
+        addChild(viewSwitch);
+
+        editor = createWidget<CodeEditor>(mm2px(Vec(3.f, 14.5f)));
         editor->box.size = mm2px(Vec(167.f, 109.5f));
         editor->module = module;
         if (!module) editor->text = filterlab::kPresets[0].code;
         addChild(editor);
+
+        response = createWidget<ResponseView>(editor->box.pos);
+        response->box.size = editor->box.size;
+        response->module = module;
+        response->hide();
+        addChild(response);
 
         const float xk = 181.f, xt = 197.f, xj = 211.f;
         DynamicLabels* dyn = new DynamicLabels;
@@ -1232,6 +1538,10 @@ struct FilterLabWidget : ModuleWidget {
         menu->addChild(createMenuItem("Save model to file...", "", [=]() { saveFile(module); }));
 
         menu->addChild(new MenuSeparator);
+        menu->addChild(createIndexPtrSubmenuItem("Screen", {"Code", "Frequency response"}, &module->view));
+        menu->addChild(createIndexSubmenuItem(
+            "Response impulse level", {"1.0 (5 V)", "-20 dB", "-40 dB"},
+            [=]() { return (size_t)(-module->impulseDb / 20); }, [=](size_t i) { module->impulseDb = -20 * (int)i; }));
         menu->addChild(createMenuItem("Reset filter state", "", [=]() { module->resetRequest = true; }));
         menu->addChild(createIndexSubmenuItem(
             "Oversampling", {"Off", "2x", "4x", "8x"},

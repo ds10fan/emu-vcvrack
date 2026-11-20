@@ -46,7 +46,7 @@ midiverb: build/midiverb_test
 midiverb-vectors:
 	node midiverb_ref.js $(MIDIVERB_HTML) ../roms > expected/midiverb.txt
 
-build/fscript_test: fscript_test.cpp ../dsp/fscript.cpp ../dsp/fscript.hpp ../dsp/filterlab_presets.cpp ../dsp/filterlab_presets.hpp ../dsp/oversampler.hpp
+build/fscript_test: fscript_test.cpp ../dsp/fscript.cpp ../dsp/fscript.hpp ../dsp/filterlab_presets.cpp ../dsp/filterlab_presets.hpp ../dsp/oversampler.hpp ../dsp/response.hpp
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ fscript_test.cpp ../dsp/fscript.cpp ../dsp/filterlab_presets.cpp
 
