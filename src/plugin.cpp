@@ -10,4 +10,5 @@ void init(Plugin* p) {
     p->addModel(modelMintySeq);
     p->addModel(modelMidiVerb);
     p->addModel(modelFilterLab);
+    p->addModel(modelHeadroom);
 }
