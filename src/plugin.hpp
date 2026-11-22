@@ -11,4 +11,3 @@ extern Model* modelGChip;
 extern Model* modelMintySeq;
 extern Model* modelMidiVerb;
 extern Model* modelFilterLab;
-extern Model* modelHeadroom;

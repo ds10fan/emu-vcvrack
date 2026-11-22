@@ -8,9 +8,9 @@ saturation points mostly guessed).
 
 <br>
 
-A VCV Rack 2 plugin with seven modules: the H-chip filter, the G-chip sample interpolator as a
-sampler, a small drive, a 7-track CV/gate recorder, the Alesis MIDIverb ROM emulator, Filter
-Lab, a filter you program in an editor on the panel, and Headroom, a paired gain up / gain down. **H-Chip Filter** is the digital filter section of E-mu's
+A VCV Rack 2 plugin with six modules: the H-chip filter, the G-chip sample interpolator as a
+sampler, a small drive, a 7-track CV/gate recorder, the Alesis MIDIverb ROM emulator, and Filter
+Lab, a filter you program in an editor on the panel. **H-Chip Filter** is the digital filter section of E-mu's
 patent US 5,170,369 (Rossum, "Dynamic digital IIR audio filter"), the filter block of the
 Emulator IV's H-chip, run cycle by cycle, and programmed with the filter recipes of the EOS
 firmware. Thirty of the E4's filter types are available: the stock lowpass, highpass, bandpass,
@@ -79,12 +79,6 @@ out = mix(in, clamp(in * drive * 4, -1, 1), drive),   mix(a, b, t) = a + (b - a)
 
 per sample (`dsp/ds10_drive.hpp`), with 5 V as the 1.0 of the formula. DRIVE knob 0..100 %,
 CV input with attenuverter (10 V for the full range), drive clamped to 0..1, polyphonic.
-
-## Headroom
-
-One GAIN knob, -36..+36 dB, and two signal paths: IN 1 -> OUT 1 is gained by the knob's amount,
-IN 2 -> OUT 2 is attenuated by the same amount. Patch a module between OUT 1 and IN 2 to drive it
-harder (or softer) without changing the overall level. Polyphonic.
 
 ## G-Chip Sampler
 

@@ -71,15 +71,6 @@
         "Filter",
         "Polyphonic"
       ]
-    },
-    {
-      "slug": "Headroom",
-      "name": "Headroom",
-      "description": "One gain knob, +-36 dB: IN 1 to OUT 1 is gained by it, IN 2 to OUT 2 is attenuated by the same amount",
-      "tags": [
-        "Utility",
-        "Polyphonic"
-      ]
     }
   ]
 }
